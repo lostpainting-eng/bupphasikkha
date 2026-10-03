@@ -1,0 +1,16 @@
+{
+  "name": "บุพสิกขา สิปปานุรักษ์",
+  "short_name": "บุพสิกขา",
+  "description": "ระบบสำนักช่างเขียนจิตรกรรมไทยแบบประเพณี — เช็คชื่อ คะแนน และรายงานผลการเรียน",
+  "lang": "th",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#FDFBF7",
+  "theme_color": "#8B2635",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
