@@ -908,18 +908,27 @@ function artHl(text, q) {
   return e.replace(re, m => `<mark style="background:#F0D878;border-radius:3px;">${m}</mark>`);
 }
 // แสดงเนื้อหา: เว้นบรรทัดว่าง = ย่อหน้า · ขึ้นต้น # = หัวข้อย่อย · ขึ้นต้น • หรือ - = รายการ
-function artBodyHtml(text, q) {
-  const blocks = String(text || '').split(/\n\s*\n/).map(t => t.trim()).filter(Boolean);
-  return blocks.map(b => {
+function artFigureHtml(im) {
+  if (!im) return '';
+  return !im.src ? '<div class="meta" style="margin:10px 0;text-align:center;">⏳ กำลังโหลดรูป…</div>' : `<figure style="margin:10px 0;"><img src="${im.src}" style="width:100%;max-height:420px;object-fit:contain;background:#F7F2E6;border-radius:10px;border:1px solid var(--line);display:block;"><figcaption class="meta" style="margin-top:4px;text-align:center;">${escapeHtml(im.caption || '')}</figcaption></figure>`;
+}
+function artBodyHtml(text, q, a) {
+  const blocks = String(text || '').split(/\n\s*\n/).map(t => t.trim()).filter(Boolean), foot = [];
+  const html = blocks.map(b => {
     const lines = b.split('\n');
+    const fig = /^\[\[รูป:(\d+)\]\]$/.exec(b);
+    if (fig) return artFigureHtml(a && a.images && a.images[Number(fig[1]) - 1]);
+    if (lines.every(l => /^\[เชิงอรรถ\]\s/.test(l))) { lines.forEach(l => foot.push(l.replace(/^\[เชิงอรรถ\]\s*/, ''))); return ''; }
     if (/^#\s+/.test(b)) return `<h3 class="hd" style="font-size:calc(18px * var(--fs));color:var(--red);margin:16px 0 4px;">${artHl(b.replace(/^#\s+/, ''), q)}</h3>`;
     if (lines.every(l => /^\s*[•\-]\s+/.test(l))) return `<ul style="margin:6px 0 10px;padding-left:22px;line-height:1.75;">${lines.map(l => `<li>${artHl(l.replace(/^\s*[•\-]\s+/, ''), q)}</li>`).join('')}</ul>`;
     return `<p style="line-height:1.8;margin:0 0 12px;">${artHl(b, q).replace(/\n/g, '<br>')}</p>`;
   }).join('');
+  return html + (foot.length ? `<div style="border-top:1px solid var(--line);margin-top:16px;padding-top:8px;"><div class="meta" style="font-weight:600;">เชิงอรรถ</div>${foot.map(f => `<div class="meta" style="line-height:1.7;margin-top:2px;">${artHl(f, q)}</div>`).join('')}</div>` : '');
 }
 function artReaderHtml(a, opt) {
   opt = opt || {};
-  const imgs = (a.images || []).map(im => !im.src ? '<div class="meta" style="margin:10px 0;text-align:center;">⏳ กำลังโหลดรูป…</div>' : `<figure style="margin:10px 0;"><img src="${im.src}" style="width:100%;max-height:420px;object-fit:contain;background:#F7F2E6;border-radius:10px;border:1px solid var(--line);display:block;"><figcaption class="meta" style="margin-top:4px;text-align:center;">${escapeHtml(im.caption || '')}</figcaption></figure>`).join('');
+  const usedImg = new Set(); (String(a.body || '').match(/\[\[รูป:(\d+)\]\]/g) || []).forEach(m => usedImg.add(Number(/\d+/.exec(m)[0]) - 1));
+  const imgs = (a.images || []).map((im, i) => usedImg.has(i) ? '' : artFigureHtml(im)).join('');
   const qs = (a.questions || []).length ? `<div style="background:#F5EBD0;border-radius:12px;padding:12px;margin-top:14px;"><div class="hd" style="font-size:calc(17px * var(--fs));color:var(--red);">💭 คำถามชวนคิด</div><ol style="margin:6px 0 0;padding-left:22px;line-height:1.75;">${a.questions.map(q => `<li>${escapeHtml(q)}</li>`).join('')}</ol></div>` : '';
   const tags = (a.tags || []).length ? `<div style="margin-top:12px;">${a.tags.map(t => `<span class="badge">#${escapeHtml(t)}</span>`).join(' ')}</div>` : '';
   const src = a.source ? `<div class="meta" style="margin-top:10px;">📚 ที่มา/อ้างอิง: ${escapeHtml(a.source)}</div>` : '';
@@ -928,7 +937,7 @@ function artReaderHtml(a, opt) {
     <div class="meta" style="margin-bottom:8px;">${a.unit ? '📂 ' + escapeHtml(a.unit) + ' · ' : ''}${artRankLong(a)} · ปรับปรุง ${fmtThaiDate(String(a.updated_at).slice(0, 10))}</div>
     ${opt.myRank && opt.myRank < artRank(a) ? `<div style="background:#FFF4DC;border:1px solid #E6CF8E;border-radius:10px;padding:8px 10px;margin-bottom:8px;font-size:calc(13.5px * var(--fs));line-height:1.6;">⛰ บทความนี้ยากกว่าขั้นของคุณเล็กน้อย (คุณอยู่ขั้น ${opt.myRank} · เหมาะกับขั้น ${artRank(a)} ขึ้นไป) อ่านช้า ๆ หรือกดถาม AI ท้ายบทความได้เลย</div>` : ''}
     ${a.summary ? `<p style="font-style:italic;color:#6a5a3a;margin:0 0 10px;line-height:1.7;">${artHl(a.summary, opt.q)}</p>` : ''}
-    ${imgs}${artBodyHtml(a.body, opt.q)}${qs}${tags}${src}${link}`;
+    ${imgs}${artBodyHtml(a.body, opt.q, a)}${qs}${tags}${src}${link}`;
 }
 
 function renderKnowledgeTab(s) {
@@ -939,6 +948,12 @@ function renderKnowledgeTab(s) {
       <h2>บอร์ดบทความความรู้</h2>
       <div class="meta">เพิ่มเนื้อหาเองให้นักเรียนอ่านและค้นคว้า · ทั้งหมด <strong style="color:var(--black);">${list.length}</strong> บทความ · เผยแพร่แล้ว <strong style="color:var(--black);">${pub}</strong></div>
       ${TART.open ? '' : '<button class="btn gold" style="margin-top:10px;" onclick="artOpenForm()">+ เพิ่มบทความ</button>'}
+    </div>
+    <div class="card"><h2>นำเข้าใบความรู้จากไฟล์ Word</h2>
+      <p class="meta" style="margin:0 0 8px;">อัพโหลดใบความรู้ (.docx) ระบบสร้างบทความบนบอร์ดให้อัตโนมัติ ทั้งชื่อเรื่อง หัวข้อย่อย เนื้อหา รูปภาพ (วางตรงตำแหน่งเดิม) คำบรรยายภาพ และเชิงอรรถ แสดงตัวอย่างให้ตรวจก่อนสร้างเป็นฉบับร่าง · ถ้าเป็นไฟล์ .doc รุ่นเก่า ให้เปิดใน Word แล้วบันทึกเป็น .docx ก่อน</p>
+      <label for="les_file" class="btn gold" style="display:block;text-align:center;cursor:pointer;margin:6px 0 8px;color:var(--black);font-size:calc(15px * var(--fs));">⬆ อัพโหลดใบความรู้ (.docx)</label>
+      <input type="file" id="les_file" accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" onchange="lessonPick(this)">
+      <div id="les_preview"></div>
     </div>
     <div id="art_form_box">${TART.open ? artFormHtml(s) : ''}</div>
     <div id="art_preview_box"></div>
@@ -988,7 +1003,7 @@ function artFormHtml(s) {
     <label>คำโปรย (สรุปสั้น 1–2 บรรทัด ขึ้นบนการ์ดในบอร์ด)</label><input id="art_summary" value="${v('summary', '')}">
     <label>เนื้อหา</label>
     <textarea id="art_body" rows="10" placeholder="พิมพ์หรือวางเนื้อหาที่นี่">${a ? escapeHtml(a.body || '') : ''}</textarea>
-    <div class="meta">เว้นบรรทัดว่าง = ขึ้นย่อหน้าใหม่ · ขึ้นต้นบรรทัดด้วย <strong>#</strong> = หัวข้อย่อย · ขึ้นต้นด้วย <strong>•</strong> หรือ <strong>-</strong> = รายการ</div>
+    <div class="meta">เว้นบรรทัดว่าง = ขึ้นย่อหน้าใหม่ · ขึ้นต้นบรรทัดด้วย <strong>#</strong> = หัวข้อย่อย · ขึ้นต้นด้วย <strong>•</strong> หรือ <strong>-</strong> = รายการ · <strong>[[รูป:1]]</strong> = วางรูปที่ 1 ตรงตำแหน่งนี้ · <strong>[เชิงอรรถ]</strong> ตามด้วยข้อความ = เชิงอรรถท้ายบทความ</div>
     ${FEATURES.ai ? `<button class="btn outline sm" id="art_ai_btn" style="margin-top:8px;" onclick="artAiDraft()">✨ ให้ AI ร่างเนื้อหาจากชื่อเรื่อง (แล้วครูแก้ต่อ)</button>` : ''}
     <label>รูปประกอบ (ได้สูงสุด 4 รูป)</label>
     <label for="art_file" class="btn outline" style="display:block;text-align:center;cursor:pointer;border:1.5px dashed var(--red);color:var(--red);padding:12px;font-weight:600;margin:4px 0 0;">📷 เลือกรูป / ถ่ายภาพ</label>
@@ -1060,6 +1075,162 @@ function artSave() {
   if (TART.editId) { const a = list.find(x => x.id === TART.editId); if (a) Object.assign(a, data); }
   else list.push(Object.assign({ id: 'ART_' + Date.now().toString(36), readers: [], created_at: data.updated_at }, data));
   TART.open = false; TART.editId = null; TART.imgs = [];
+  renderKnowledgeTab(s);
+}
+/* ---------------- นำเข้าใบความรู้จากไฟล์ Word (.docx) → บทความบนบอร์ดความรู้ ---------------- */
+let LESSON_IMPORT = null;
+const ART_IMG_MAX = 4;
+async function lessonConvertImage(bytes, mime) { return artReadImage(new Blob([bytes], { type: mime })); }
+async function lessonParseDocx(buf, convertImage) {
+  if (typeof JSZip === 'undefined') throw new Error('โหลดตัวอ่านไฟล์ไม่สำเร็จ ลองเปิดแอปใหม่');
+  const sig = new Uint8Array(buf, 0, 4);
+  if (sig[0] === 0xD0 && sig[1] === 0xCF && sig[2] === 0x11 && sig[3] === 0xE0) throw new Error('นี่คือไฟล์ Word รุ่นเก่า (.doc) — เปิดไฟล์ใน Word แล้วเลือก ไฟล์ > บันทึกเป็น > Word Document (.docx) จากนั้นอัพโหลดไฟล์ .docx อีกครั้ง');
+  let zip; try { zip = await JSZip.loadAsync(buf); } catch (e) { throw new Error('อ่านไฟล์ไม่ได้ — ต้องเป็นไฟล์ Word นามสกุล .docx'); }
+  const docf = zip.file('word/document.xml');
+  if (!docf) throw new Error('ไม่ใช่ไฟล์ Word (.docx) ที่อ่านได้');
+  const parse = t => new DOMParser().parseFromString(t, 'application/xml');
+  const doc = parse(await docf.async('string'));
+  const rels = {}, rf = zip.file('word/_rels/document.xml.rels');
+  if (rf) for (const r of parse(await rf.async('string')).getElementsByTagName('Relationship')) rels[r.getAttribute('Id')] = r.getAttribute('Target') || '';
+  const textOf = el => [...el.getElementsByTagName('w:t')].map(x => x.textContent).join('').replace(/\s+/g, ' ').trim();
+  const notes = {}, nf = zip.file('word/footnotes.xml');
+  if (nf) for (const fn of parse(await nf.async('string')).getElementsByTagName('w:footnote')) { if (Number(fn.getAttribute('w:id')) > 0) notes[fn.getAttribute('w:id')] = textOf(fn); }
+  const issues = [], images = [], imgByRid = {}, placed = new Set();
+  const imgOf = async rid => {
+    if (rid in imgByRid) return imgByRid[rid];
+    let idx = -1;
+    const target = rels[rid] || '', path = target.startsWith('/') ? target.slice(1) : 'word/' + target.replace(/^\.\//, '');
+    const ext = (/\.([a-z0-9]+)$/i.exec(path) || [, ''])[1].toLowerCase(), name = path.split('/').pop();
+    const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' }[ext];
+    if (!mime) issues.push('รูป ' + name + ' เป็นชนิดที่เบราว์เซอร์แสดงไม่ได้ — ข้ามรูปนี้');
+    else if (zip.file(path)) { try { images.push({ src: await convertImage(await zip.file(path).async('uint8array'), mime), caption: '' }); idx = images.length - 1; } catch (e) { issues.push('อ่านรูป ' + name + ' ไม่ได้ — ข้ามรูปนี้'); } }
+    imgByRid[rid] = idx;
+    return idx;
+  };
+  const items = [];
+  let fnN = 0, capPrev = false;
+  for (const p of doc.getElementsByTagName('w:p')) {
+    const afterCap = capPrev; capPrev = false;
+    const ps = p.getElementsByTagName('w:pStyle')[0], style = ps ? (ps.getAttribute('w:val') || '') : '';
+    let raw = ''; const rids = [];
+    for (const n of p.getElementsByTagName('*')) {
+      const tn = n.tagName;
+      if (tn === 'w:t') raw += n.textContent;
+      else if (tn === 'w:tab' || tn === 'w:br') raw += ' ';
+      else if (tn === 'w:footnoteReference') { const nt = notes[n.getAttribute('w:id')]; if (nt) { fnN++; raw += '[' + fnN + ']'; items.push({ k: 'fn', text: '(' + fnN + ') ' + nt }); } }
+      else { const rid = tn === 'a:blip' ? n.getAttribute('r:embed') : (tn === 'v:imagedata' ? n.getAttribute('r:id') : null); if (rid && !rids.includes(rid)) rids.push(rid); }
+    }
+    const text = raw.replace(/\s+/g, ' ').trim(), idxs = [];
+    for (const rid of rids) { const i = await imgOf(rid); if (i >= 0 && !placed.has(i)) { placed.add(i); idxs.push(i); } }
+    const runs = [...p.getElementsByTagName('w:r')].filter(r => textOf(r));
+    const boldAll = runs.length > 0 && runs.every(r => { const b = r.getElementsByTagName('w:b')[0]; return b && !/^(0|false)$/.test(b.getAttribute('w:val') || ''); });
+    const isList = p.getElementsByTagName('w:numPr').length > 0;
+    const imgItems = () => idxs.forEach(i => items.push({ k: 'img', idx: i }));
+    if (/^(รูปที่|ภาพที่|รูป|ภาพ)\s*[\d๐-๙]+/.test(text)) { imgItems(); items.push({ k: 'cap', text, sameP: idxs.length }); capPrev = true; continue; }
+    if (!text) { imgItems(); continue; }
+    if (afterCap && idxs.length === 0 && text.length <= 120 && /^\s{2,}|^\s*\(/.test(raw)) { items.push({ k: 'capmore', text }); continue; }
+    if (/^\(\s*[\d๐-๙]+\s*\)/.test(text) && text.length >= 25 && /หน้า|พ\.ศ\.|ค\.ศ\.|ISBN|pp\.|:/.test(text)) { items.push({ k: 'fn', text }); imgItems(); continue; }
+    if (/^(Heading1|Title|หัวเรื่อง1?)$/i.test(style)) items.push({ k: 'h1', text });
+    else if (/^(Heading|หัวเรื่อง)/i.test(style) || (boldAll && !isList && text.length <= 70 && !/[.:：]$/.test(text))) items.push({ k: 'h', text });
+    else items.push({ k: isList ? 'li' : 'p', text });
+    imgItems();
+  }
+  // ชื่อเรื่อง / หน่วย
+  let title = '', unit = '', startAt = 0;
+  const h1 = items.findIndex(x => x.k === 'h1');
+  if (h1 >= 0) { title = items[h1].text; unit = items.slice(0, h1).filter(x => x.k === 'p' || x.k === 'h').map(x => x.text).join(' · '); startAt = h1 + 1; }
+  else { const f = items.findIndex(x => x.k === 'p' || x.k === 'h'); if (f >= 0) { title = items[f].text; startAt = f + 1; } }
+  title = title.replace(/^เรื่อง\s*/, '');
+  // แปลงเป็นบล็อกเนื้อหา + จับคู่คำบรรยายภาพ
+  const blocks = []; let pending = [], lastCap = -1;
+  items.forEach((it, i) => {
+    if (i < startAt && it.k !== 'img') return;
+    if (it.k !== 'capmore' && it.k !== 'cap') lastCap = -1;
+    if (it.k === 'img') { blocks.push({ img: it.idx }); pending.push(it.idx); }
+    else if (it.k === 'cap') {
+      const segs = it.text.split(/(?=(?:รูปที่|ภาพที่)\s*[\d๐-๙]+)/).map(x => x.trim()).filter(Boolean);
+      if (it.sameP === 1 && pending.length) pending = [pending[pending.length - 1]];
+      let got = -1;
+      for (const sg of segs) {
+        if (pending.length) { const t = pending.shift(); images[t].caption = sg; got = t; }
+        else if (got >= 0) images[got].caption += ' · ' + sg;
+        else blocks.push({ text: sg });
+      }
+      lastCap = got;
+    }
+    else if (it.k === 'capmore') { if (lastCap >= 0) images[lastCap].caption += ' ' + it.text; else blocks.push({ text: it.text }); }
+    else if (it.k === 'fn') blocks.push({ text: '[เชิงอรรถ] ' + it.text });
+    else if (it.k === 'h') { pending = []; blocks.push({ text: '# ' + it.text }); }
+    else if (it.k === 'li') {
+      pending = [];
+      const last = blocks[blocks.length - 1];
+      if (last && last.li) last.text += '\n• ' + it.text; else blocks.push({ text: '• ' + it.text, li: true });
+    }
+    else if (it.k === 'p') { pending = []; blocks.push({ text: it.text }); }
+  });
+  // แบ่งเป็นตอน ตอนละไม่เกิน ART_IMG_MAX รูป
+  const parts = []; let cur = { blocks: [], imgs: [] };
+  for (const b of blocks) {
+    if (b.img != null && cur.imgs.length >= ART_IMG_MAX) { parts.push(cur); cur = { blocks: [], imgs: [] }; }
+    cur.blocks.push(b); if (b.img != null) cur.imgs.push(b.img);
+  }
+  parts.push(cur);
+  const out = parts.map(pt => {
+    const map = new Map(); pt.imgs.forEach((g, n) => map.set(g, n + 1));
+    const seen = new Set(), texts = [];
+    for (const b of pt.blocks) {
+      if (b.img != null) texts.push('[[รูป:' + map.get(b.img) + ']]');
+      else if (/^\[เชิงอรรถ\]/.test(b.text)) { if (!seen.has(b.text)) { seen.add(b.text); texts.push(b.text); } }
+      else texts.push(b.text);
+    }
+    return { body: texts.join('\n\n'), images: pt.imgs.map(g => ({ src: images[g].src, caption: images[g].caption.trim() })), notes: seen.size };
+  }).filter(pt => pt.body.trim() || pt.images.length);
+  return { title, unit, parts: out, issues, nImages: images.length };
+}
+async function lessonPick(inp) {
+  const box = byId('les_preview'), f = inp.files && inp.files[0];
+  LESSON_IMPORT = null; box.innerHTML = '';
+  if (!f) return;
+  inp.value = '';
+  box.innerHTML = '<p class="meta">กำลังอ่านไฟล์ ' + escapeHtml(f.name) + ' และย่อรูป… (ไฟล์ที่มีรูปมากอาจใช้เวลาครู่หนึ่ง)</p>';
+  try {
+    const r = await lessonParseDocx(await f.arrayBuffer(), lessonConvertImage);
+    if (!r.parts.length) throw new Error('ไม่พบเนื้อหาในไฟล์');
+    if (!r.title) r.title = f.name.replace(/\.[^.]+$/, '');
+    LESSON_IMPORT = { sid: curSubject().subject_id, title: r.title, unit: r.unit, parts: r.parts, publish: false };
+    const n = r.parts.length;
+    const partsHtml = r.parts.map((pt, i) => `<div style="border-top:1px solid #E7D9B8;padding:8px 0;">
+      <strong>${n > 1 ? 'ตอนที่ ' + (i + 1) + '/' + n + ' · ' : ''}${pt.images.length} รูป${pt.notes ? ' · เชิงอรรถ ' + pt.notes + ' รายการ' : ''}</strong>
+      <div class="meta" style="margin:4px 0;">${escapeHtml(pt.body.replace(/\[\[รูป:\d+\]\]|\[เชิงอรรถ\]/g, '').replace(/#\s/g, '').replace(/\s+/g, ' ').trim().slice(0, 130))}…</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">${pt.images.map(im => `<img src="${im.src}" style="width:54px;height:54px;object-fit:cover;border-radius:6px;border:1px solid var(--line);">`).join('')}</div></div>`).join('');
+    box.innerHTML = `<div style="background:#FFF4DC;border-radius:10px;padding:10px;margin-top:8px;">
+      <strong>พบ ${r.nImages} รูป · สร้างเป็น ${n} บทความ</strong>${r.issues.length ? ` <span class="badge red">แจ้งเตือน ${r.issues.length}</span>` : ''}
+      <p class="meta" style="margin:4px 0;">${n > 1 ? 'เพราะบทความหนึ่งแนบรูปได้สูงสุด ' + ART_IMG_MAX + ' รูป ระบบจึงแบ่งเป็นตอน ๆ ตามลำดับเนื้อหา' : 'แก้ชื่อและหน่วยก่อนยืนยันได้'}</p>
+      <label>ชื่อเรื่อง</label><input value="${escapeHtml(r.title)}" onchange="LESSON_IMPORT.title=this.value">
+      <label>หน่วย / ใบความรู้ที่</label><input value="${escapeHtml(r.unit)}" onchange="LESSON_IMPORT.unit=this.value">
+      ${partsHtml}
+      ${r.issues.length ? `<p class="meta" style="color:#8B2635;">${r.issues.slice(0, 6).map(escapeHtml).join('<br>')}</p>` : ''}
+      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;"><input type="checkbox" onchange="LESSON_IMPORT.publish=this.checked"> เผยแพร่ให้นักเรียนเห็นทันที (ไม่ติ๊ก = เก็บเป็นฉบับร่าง)</label>
+    </div>
+    <button class="btn gold" style="width:100%;margin-top:8px;" onclick="lessonConfirm()">ยืนยันสร้าง ${n} บทความบนบอร์ดความรู้</button>`;
+  } catch (e) { box.innerHTML = '<div class="error-msg">' + escapeHtml(e.message || String(e)) + '</div>'; }
+}
+function lessonConfirm() {
+  if (!LESSON_IMPORT) return;
+  const L = LESSON_IMPORT, s = findSubject(L.sid), list = artsOf(s), n = L.parts.length, now = new Date().toISOString();
+  const title = (L.title || '').trim() || 'ใบความรู้';
+  L.parts.forEach((pt, i) => {
+    const a = {
+      id: 'ART_' + Date.now().toString(36) + i, readers: [], created_at: now, updated_at: now,
+      title: n > 1 ? title + ' (ตอนที่ ' + (i + 1) + '/' + n + ')' : title, unit: (L.unit || '').trim(), summary: '', body: pt.body,
+      images: pt.images.map(im => ({ src: im.src, caption: im.caption || '' })), rank: 1, tags: [], questions: [], source: '', link: '',
+      pinned: false, status: L.publish ? 'published' : 'draft',
+    };
+    list.push(a);
+    persistArticle(s, a, true);
+  });
+  LESSON_IMPORT = null;
+  toast('สร้าง ' + n + ' บทความแล้ว' + (L.publish ? '' : ' (ฉบับร่าง — กด "ดูตัวอย่าง" ตรวจแล้วค่อยเผยแพร่)'));
   renderKnowledgeTab(s);
 }
 function artToggle(id, k) {
