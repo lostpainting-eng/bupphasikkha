@@ -3266,7 +3266,7 @@ function renderExamTab(s) {
       <button class="btn gold" onclick="createExamManual('${s.subject_id}')">+ สร้างชุดข้อสอบ แล้วเพิ่มข้อ</button>
     </div>
     <div class="card"><h2>นำเข้าข้อสอบจากไฟล์ Excel</h2>
-      <p class="meta" style="margin:0 0 6px;">เตรียมข้อสอบปรนัย 4 ตัวเลือกในไฟล์ .xlsx หรือ .csv แล้วเลือกไฟล์ ระบบจะแสดงตัวอย่างให้ตรวจก่อนสร้างเป็นชุดข้อสอบฉบับร่าง (นำเข้าได้ไม่เกิน 60 ข้อ)</p>
+      <p class="meta" style="margin:0 0 6px;">เขียนข้อสอบปรนัย 4 ตัวเลือกลงไฟล์ .xlsx ตามแบบฟอร์ม (คอลัมน์: ลำดับข้อสอบ, ชั้นปีที่, สมรรถนะ, คำถาม, ประเภท, ตัวเลือกที่ 1–4 พร้อมค่าคะแนนและผลลัพธ์ถูกผิด) แล้วเลือกไฟล์ ระบบจะแยกเป็นชุดข้อสอบตามชั้นปีและสมรรถนะให้อัตโนมัติ (ชุดละไม่เกิน 60 ข้อ) และแสดงตัวอย่างให้ตรวจก่อนสร้างเป็นฉบับร่าง</p>
       <button class="btn outline sm" style="margin:0 0 8px;" onclick="downloadExamTemplate()">⬇ ดาวน์โหลดไฟล์แบบฟอร์ม (.xlsx)</button>
       <label>เลือกไฟล์ข้อสอบ</label>
       <input id="exim_file" type="file" accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" onchange="examImportPick('${s.subject_id}', this)">
@@ -3370,6 +3370,44 @@ function examRowsToQuestions(rows) {
   });
   return { questions, issues };
 }
+function examParseSheet(rows, fileName) {
+  // รูปแบบแพลตฟอร์ม: ลำดับข้อสอบ | ชั้นปีที่ | สมรรถนะ | คำถาม | ประเภท | (ตัวเลือก | ค่าคะแนน | ผลลัพธ์ถูกผิด) x N
+  const hi = rows.findIndex(r => r.some(c => /ตัวเลือกที่\s*\d/.test(String(c || ''))) && r.some(c => /ผลลัพธ์|ถูกผิด/.test(String(c || ''))));
+  if (hi < 0) {
+    const { questions, issues } = examRowsToQuestions(rows);
+    return { sets: questions.length ? [{ label: '', questions }] : [], issues, platform: false };
+  }
+  const H = rows[hi].map(c => String(c || '').trim());
+  const col = re => H.findIndex(c => re.test(c));
+  const cQ = col(/คำถาม/), cLv = col(/ชั้นปี/), cCp = col(/สมรรถนะ/), cTy = col(/ประเภท/);
+  const optCols = []; H.forEach((c, i) => { if (/^ตัวเลือกที่\s*\d/.test(c)) optCols.push(i); });
+  const issues = [], groups = new Map();
+  rows.slice(hi + 1).forEach((r, k) => {
+    r = r.map(c => String(c == null ? '' : c).trim());
+    if (!r.some(c => c)) return;
+    const rowNo = hi + 2 + k, label = 'แถว ' + rowNo + ': ';
+    const q = r[cQ] || '';
+    if (!q) { issues.push(label + 'ไม่มีคำถาม — ข้าม'); return; }
+    const ty = (cTy >= 0 ? r[cTy] : 'multiple_choice').toLowerCase();
+    if (ty && ty !== 'multiple_choice') { issues.push(label + 'ประเภท "' + ty + '" ยังไม่รองรับ (รองรับ multiple_choice) — ข้าม'); return; }
+    const opts = optCols.map(c => ({ t: r[c] || '', score: Number(r[c + 1]) || 0, ok: /^(1|true|ถูก)$/i.test(r[c + 2] || '') })).filter(o => o.t);
+    if (opts.length !== 4) { issues.push(label + 'ต้องมีตัวเลือก 4 ข้อ (พบ ' + opts.length + ') — ข้าม'); return; }
+    let correct = opts.map((o, i) => o.ok ? i : -1).filter(i => i >= 0);
+    if (!correct.length) correct = opts.map((o, i) => o.score > 0 ? i : -1).filter(i => i >= 0);
+    if (correct.length !== 1) { issues.push(label + (correct.length ? 'มีเฉลยมากกว่า 1 ข้อ' : 'ไม่มีเฉลย (ผลลัพธ์ถูกผิด = 1)') + ' — ข้าม'); return; }
+    const lv = cLv >= 0 ? r[cLv] : '', cp = cCp >= 0 ? r[cCp] : '';
+    const key = lv + '|' + cp;
+    if (!groups.has(key)) groups.set(key, { lv, cp, questions: [] });
+    groups.get(key).questions.push({ question: q, choices: opts.map(o => o.t), correct_index: correct[0] });
+  });
+  const sets = [];
+  for (const g of groups.values()) {
+    const base = [g.lv, g.cp ? 'สมรรถนะที่ ' + g.cp : ''].filter(Boolean).join(' ');
+    const parts = Math.ceil(g.questions.length / 60);
+    for (let p = 0; p < parts; p++) sets.push({ label: base + (parts > 1 ? ' (ตอนที่ ' + (p + 1) + ')' : ''), questions: g.questions.slice(p * 60, p * 60 + 60) });
+  }
+  return { sets, issues, platform: true };
+}
 async function examImportPick(sid, inp) {
   const box = byId('exim_preview'), f = inp.files && inp.files[0];
   EXAM_IMPORT = null; box.innerHTML = '';
@@ -3380,48 +3418,60 @@ async function examImportPick(sid, inp) {
     if (/\.xlsx$/i.test(f.name)) rows = await xlsxFirstSheetRows(await f.arrayBuffer());
     else if (/\.(csv|txt)$/i.test(f.name)) rows = csvRows(new TextDecoder('utf-8').decode(await f.arrayBuffer()));
     else throw new Error('รองรับเฉพาะไฟล์ .xlsx หรือ .csv (ถ้าเป็น .xls ให้บันทึกเป็น .xlsx ก่อน)');
-    const { questions, issues } = examRowsToQuestions(rows);
-    if (!questions.length) { box.innerHTML = '<div class="error-msg">ไม่พบข้อสอบที่นำเข้าได้</div>' + (issues.length ? '<p class="meta">' + issues.slice(0, 8).map(escapeHtml).join('<br>') + '</p>' : ''); return; }
-    let extra = '';
-    if (questions.length > 60) { issues.push('มี ' + questions.length + ' ข้อ — นำเข้าเฉพาะ 60 ข้อแรก'); questions.length = 60; }
-    EXAM_IMPORT = { sid, questions, name: f.name.replace(/\.[^.]+$/, '') };
-    const sample = questions.slice(0, 3).map((q, i) => `<div style="margin:6px 0;"><strong>${i + 1}. ${escapeHtml(q.question)}</strong><br>${q.choices.map((c, ci) => `<span class="meta" style="${ci === q.correct_index ? 'color:#8B2635;font-weight:600;' : ''}">${'กขคง'[ci]}. ${escapeHtml(c)}${ci === q.correct_index ? ' ✓' : ''}</span>`).join('<br>')}</div>`).join('');
+    const { sets, issues, platform } = examParseSheet(rows, f.name);
+    const total = sets.reduce((n, x) => n + x.questions.length, 0);
+    if (!total) { box.innerHTML = '<div class="error-msg">ไม่พบข้อสอบที่นำเข้าได้</div>' + (issues.length ? '<p class="meta">' + issues.slice(0, 8).map(escapeHtml).join('<br>') + '</p>' : ''); return; }
+    const baseName = f.name.replace(/\.[^.]+$/, ''), typedTitle = (byId('exam_title').value || '').trim(), typedDur = Math.round(Number(byId('exam_duration').value)) || 15;
+    sets.forEach(x => {
+      x.title = platform ? ((typedTitle ? typedTitle + ' ' : '') + (x.label || baseName)) : (typedTitle || baseName || 'ข้อสอบนำเข้า');
+      x.minutes = platform ? Math.max(1, Math.min(180, x.questions.length)) : Math.max(1, Math.min(180, typedDur));
+    });
+    EXAM_IMPORT = { sid, sets };
+    const rowsHtml = sets.map((x, i) => `<div style="border-top:1px solid #E7D9B8;padding:8px 0;">
+      <input value="${escapeHtml(x.title)}" onchange="EXAM_IMPORT.sets[${i}].title=this.value">
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px;"><span class="badge">${x.questions.length} ข้อ</span>
+        <label style="margin:0;">เวลา (นาที)</label><input type="number" min="1" max="180" inputmode="numeric" style="width:90px;" value="${x.minutes}" onchange="EXAM_IMPORT.sets[${i}].minutes=Math.max(1,Math.min(180,Math.round(Number(this.value))||1))"></div>
+      <div class="meta" style="margin-top:4px;">ข้อแรก: ${escapeHtml(x.questions[0].question.slice(0, 70))}</div></div>`).join('');
     box.innerHTML = `<div style="background:#FFF4DC;border-radius:10px;padding:10px;margin-top:8px;">
-      <strong>พบข้อสอบที่นำเข้าได้ ${questions.length} ข้อ</strong>${issues.length ? ` <span class="badge red">ข้าม/แจ้งเตือน ${issues.length}</span>` : ''}
-      ${sample}${questions.length > 3 ? `<p class="meta">…และอีก ${questions.length - 3} ข้อ</p>` : ''}
+      <strong>พบข้อสอบ ${total} ข้อ → จัดเป็น ${sets.length} ชุด</strong>${issues.length ? ` <span class="badge red">ข้าม/แจ้งเตือน ${issues.length}</span>` : ''}
+      <p class="meta" style="margin:4px 0;">แก้ชื่อชุดและเวลาได้ก่อนยืนยัน ทุกชุดจะเป็นฉบับร่าง ยังไม่ปล่อยให้นักเรียนทำ</p>
+      ${rowsHtml}
       ${issues.length ? `<p class="meta" style="color:#8B2635;">${issues.slice(0, 8).map(escapeHtml).join('<br>')}${issues.length > 8 ? '<br>…' : ''}</p>` : ''}
     </div>
-    <button class="btn gold" style="width:100%;margin-top:8px;" onclick="examImportConfirm()">ยืนยันนำเข้า ${questions.length} ข้อ เป็นชุดข้อสอบฉบับร่าง</button>`;
+    <button class="btn gold" style="width:100%;margin-top:8px;" onclick="examImportConfirm()">ยืนยันสร้าง ${sets.length} ชุดข้อสอบ (${total} ข้อ)</button>`;
   } catch (e) { box.innerHTML = '<div class="error-msg">' + escapeHtml(e.message || String(e)) + '</div>'; }
 }
 function examImportConfirm() {
   if (!EXAM_IMPORT) return;
-  const { sid, questions, name } = EXAM_IMPORT, s = findSubject(sid);
-  const title = (byId('exam_title').value.trim()) || name || 'ข้อสอบนำเข้า';
-  const dur = Math.round(Number(byId('exam_duration').value));
-  if (!(dur >= 1 && dur <= 180)) { byId('exam_err').textContent = 'เวลาต้องอยู่ระหว่าง 1–180 นาที'; byId('exam_err').scrollIntoView({ block: 'center' }); return; }
-  s.exams.push({ exam_id: shortId('EX'), title, duration_minutes: dur, status: 'draft', questions });
-  const idx = s.exams.length - 1;
+  const { sid, sets } = EXAM_IMPORT, s = findSubject(sid);
+  let first = -1;
+  sets.forEach(x => {
+    s.exams.push({ exam_id: shortId('EX'), title: (x.title || '').trim() || 'ข้อสอบนำเข้า', duration_minutes: x.minutes, status: 'draft', questions: x.questions });
+    const idx = s.exams.length - 1; if (first < 0) first = idx;
+    persistExam(sid, idx);
+  });
+  const total = sets.reduce((n, x) => n + x.questions.length, 0);
   EXAM_IMPORT = null;
-  persistExam(sid, idx);
-  toast('นำเข้า ' + questions.length + ' ข้อแล้ว — ตรวจทานก่อนปล่อยสอบ');
-  renderExamReview(sid, idx);
+  toast('นำเข้า ' + total + ' ข้อ เป็น ' + sets.length + ' ชุดแล้ว — ตรวจทานก่อนปล่อยสอบ');
+  if (sets.length === 1) renderExamReview(sid, first); else renderExamTab(s);
 }
 async function downloadExamTemplate() {
   try {
     const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const rows = [
-      ['คำถาม', 'ตัวเลือก ก', 'ตัวเลือก ข', 'ตัวเลือก ค', 'ตัวเลือก ง', 'เฉลย (ก/ข/ค/ง)'],
-      ['ตัวอย่าง: ลายไทยพื้นฐานที่เป็นต้นแบบของลายอื่น ๆ คือลายใด', 'ลายกระหนก', 'ลายประจำยาม', 'ลายเครือเถา', 'ลายกนกเปลว', 'ก'],
-      ['ตัวอย่าง: เครื่องมือใดใช้ตัดเส้นภาพจิตรกรรมไทย', 'พู่กันขนาดเล็ก', 'แปรงทาสี', 'ลูกกลิ้ง', 'ไม้บรรทัด', 'ก']
-    ];
+    const head = ['ลำดับข้อสอบ', 'ชั้นปีที่', 'สมรรถนะ', 'คำถาม', 'ประเภท'];
+    for (let i = 1; i <= 4; i++) head.push('ตัวเลือกที่ ' + i, 'ค่าคะแนน', 'ผลลัพธ์ถูกผิด');
+    const mk = (no, lv, cp, q, opts, ok) => { const r = [no, lv, cp, q, 'multiple_choice']; opts.forEach((o, i) => r.push(o, i === ok ? 1 : 0, i === ok ? 1 : 0)); return r; };
+    const rows = [head,
+      mk(1, 'ปวช.1', 1, 'ตัวอย่าง: ลายไทยพื้นฐานที่เป็นต้นแบบของลายอื่น ๆ คือลายใด', ['ลายกระหนก', 'ลายประจำยาม', 'ลายเครือเถา', 'ลายกนกเปลว'], 0),
+      mk(2, 'ปวช.1', 1, 'ตัวอย่าง: เครื่องมือใดใช้ตัดเส้นภาพจิตรกรรมไทย', ['แปรงทาสี', 'พู่กันขนาดเล็ก', 'ลูกกลิ้ง', 'ไม้บรรทัด'], 1)];
     const col = i => String.fromCharCode(65 + i);
-    const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="60" customWidth="1"/><col min="2" max="5" width="28" customWidth="1"/><col min="6" max="6" width="18" customWidth="1"/></cols><sheetData>' +
-      rows.map((r, ri) => `<row r="${ri + 1}">` + r.map((v, ci) => `<c r="${col(ci)}${ri + 1}" t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`).join('') + '</row>').join('') + '</sheetData></worksheet>';
+    const cell = (v, ri, ci) => typeof v === 'number' ? `<c r="${col(ci)}${ri + 1}"><v>${v}</v></c>` : `<c r="${col(ci)}${ri + 1}" t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
+    const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="3" width="14" customWidth="1"/><col min="4" max="4" width="60" customWidth="1"/><col min="5" max="5" width="16" customWidth="1"/><col min="6" max="17" width="22" customWidth="1"/></cols><sheetData>' +
+      rows.map((r, ri) => `<row r="${ri + 1}">` + r.map((v, ci) => cell(v, ri, ci)).join('') + '</row>').join('') + '</sheetData></worksheet>';
     const z = new JSZip();
     z.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
     z.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
-    z.file('xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="ข้อสอบ" sheetId="1" r:id="rId1"/></sheets></workbook>');
+    z.file('xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="ข้อคำถาม" sheetId="1" r:id="rId1"/></sheets></workbook>');
     z.file('xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
     z.file('xl/worksheets/sheet1.xml', sheet);
     const blob = await z.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
