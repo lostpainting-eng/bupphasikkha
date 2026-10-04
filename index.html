@@ -43,7 +43,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   .preview-banner { background: var(--gold); color: var(--black); text-align: center; font-size:calc(12.5px * var(--fs)); padding: 6px 10px; font-weight: 600; }
   .topbar { background: linear-gradient(135deg, var(--red) 0%, var(--red-dark) 100%); color: var(--gold-light); padding: 16px 20px;
     display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid var(--gold); top: env(safe-area-inset-top, 0px); }
-  .topbar h1 { font-size:calc(25px * var(--fs)); margin: 0; color: var(--gold-light); }
+  .brand-logo { width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0; display: block; object-fit: cover; }
+.topbar h1 { font-size:calc(25px * var(--fs)); margin: 0; color: var(--gold-light); }
   .topbar p { font-size:calc(16px * var(--fs)); margin: 2px 0 0; color: var(--white); opacity: .85; }
   .topbar button { background: transparent; border: 1px solid var(--gold); color: var(--gold-light); border-radius: 8px; padding: 6px 14px; font-family: inherit; cursor: pointer; }
   .tabs { display: flex; gap: 2px; background: var(--black); padding: 0 10px; overflow-x: auto; }
@@ -337,7 +338,7 @@ function aiErrorMessage(e) {
 // ============================== หน้าเลือกบทบาท ==============================
 function showRolePicker() {
   render(`
-    <div class="topbar"><div><h1>บุพสิกขา สิปปานุรักษ์</h1><p>สำนักช่างเขียนจิตรกรรมไทยแบบประเพณี</p></div></div>
+    <div class="topbar"><div style="display:flex;align-items:center;gap:12px;"><img class="brand-logo" src="logo.png" alt="" onerror="this.style.display='none'"><div><h1>บุพสิกขา สิปปานุรักษ์</h1><p>สำนักช่างเขียนจิตรกรรมไทยแบบประเพณี</p></div></div></div>
     <div class="role-pick">
       <div class="card" onclick="enterStudent()"><h2 style="border:none;padding:0;">เข้าสำนัก (นักเรียนตัวอย่าง)</h2><p style="margin:0;color:#777;font-size:calc(13px * var(--fs));">ดูข้อสอบ ชิ้นงาน กราฟความสามารถ</p></div>
       <div class="card" onclick="enterTeacher()"><h2 style="border:none;padding:0;">ครูผู้สอน</h2><p style="margin:0;color:#777;font-size:calc(13px * var(--fs));">จัดการรายวิชา ข้อสอบ คลังความรู้ ชิ้นงาน</p></div>
@@ -351,7 +352,7 @@ function logout() { CURRENT_USER = null; CURRENT_SUBJECT_ID = null; showRolePick
 // ============================== แดชบอร์ดครู ==============================
 function showTeacherDashboard() {
   render(`
-    <div class="topbar"><div style="display:flex;align-items:center;gap:10px;">${DEMO.teacher.photo ? avatarCircle(DEMO.teacher.full_name, 42, DEMO.teacher.photo) : ''}<div><h1>ครูผู้สอน</h1><p>${escapeHtml(DEMO.teacher.full_name)}</p></div></div><button onclick="logout()">ออก</button></div>
+    <div class="topbar"><div style="display:flex;align-items:center;gap:10px;"><img class="brand-logo" src="logo.png" alt="" onerror="this.style.display='none'">${DEMO.teacher.photo ? avatarCircle(DEMO.teacher.full_name, 42, DEMO.teacher.photo) : ''}<div><h1>ครูผู้สอน</h1><p>${escapeHtml(DEMO.teacher.full_name)}</p></div></div><button onclick="logout()">ออก</button></div>
     <div class="tabs">
       <button class="active" data-tt="subjects" onclick="switchTeacherTab('subjects')">รายวิชา</button>
       <button data-tt="roster" onclick="switchTeacherTab('roster')">ศิษย์ในสำนัก</button>
@@ -759,6 +760,19 @@ function saveTeacherProfile() {
   switchTeacherTab('profile');
 }
 
+function attRoster(subjectId, room) { return rosterFor(subjectId).filter(x => !room || x.room === room); }
+function attBuildRooms(subjectId, date, want) {
+  const sel = byId('att_room'), base = rosterFor(subjectId), rooms = Array.from(new Set(base.map(x => x.room).filter(Boolean))).sort();
+  const existing = DEMO.attendance.find(a => a.subject_id === subjectId && a.date === date);
+  const done = r => !!existing && base.filter(x => !r || x.room === r).some(x => existing.records.some(rec => rec.student_id === x.student_id));
+  let value = (want == null || (want !== '' && !rooms.includes(want)) || (want === '' && rooms.length === 1)) ? (rooms[0] || '') : want;
+  const opts = rooms.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)} (${base.filter(x => x.room === r).length} คน)${done(r) ? ' ✓ เช็คแล้ว' : ''}</option>`);
+  if (rooms.length !== 1) opts.push(`<option value="">${rooms.length ? 'ทุกห้องรวมกัน' : 'ทั้งหมด'} (${base.length} คน)${done('') ? ' ✓ เช็คแล้ว' : ''}</option>`);
+  sel.innerHTML = opts.join('');
+  sel.value = value;
+  return value;
+}
+function attSubjectChanged() { byId('att_room').dataset.auto = '1'; loadAttendanceDraft(); }
 function renderAttendanceTab() {
   const subjectOptions = DEMO.subjects.map(s => `<option value="${s.subject_id}">${escapeHtml(s.subject_name)}</option>`).join('');
   const todayStr = todayISO();
@@ -766,7 +780,9 @@ function renderAttendanceTab() {
     <div class="card">
       <h2>เช็คชื่อเข้าเรียน</h2>
       <label>รายวิชา</label>
-      <select id="att_subject" onchange="loadAttendanceDraft()">${subjectOptions}</select>
+      <select id="att_subject" onchange="attSubjectChanged()">${subjectOptions}</select>
+      <label>ห้อง/กลุ่ม (เลือกทีละห้อง)</label>
+      <select id="att_room" data-auto="1" onchange="loadAttendanceDraft()"></select>
       <label>วันที่</label>
       ${dateField('att_date', todayStr, 'loadAttendanceDraft')}
       <div id="att_list" style="margin-top:12px;"></div>
@@ -780,18 +796,24 @@ function renderAttendanceTab() {
 function loadAttendanceDraft() {
   const subjectId = byId('att_subject').value;
   const date = byId('att_date').value;
+  const selEl = byId('att_room'), auto = selEl.dataset.auto === '1';
+  selEl.dataset.auto = '';
+  const room = attBuildRooms(subjectId, date, auto ? null : selEl.value);
   const existing = DEMO.attendance.find(a => a.subject_id === subjectId && a.date === date);
   ATTENDANCE_DRAFT = {};
-  rosterFor(subjectId).forEach(st => {
+  let had = false;
+  attRoster(subjectId, room).forEach(st => {
     const rec = existing && existing.records.find(r => r.student_id === st.student_id);
+    if (rec) had = true;
     ATTENDANCE_DRAFT[st.student_id] = rec ? rec.status : 'present';
   });
-  byId('att_saved').textContent = existing ? 'เคยบันทึกวันนี้ไว้แล้ว — แก้ไขแล้วกดบันทึกซ้ำได้' : '';
+  byId('att_saved').textContent = had ? 'เคยบันทึกห้องนี้ของวันนี้ไว้แล้ว — แก้ไขแล้วกดบันทึกซ้ำได้' : '';
   renderAttendanceList();
 }
 
 function renderAttendanceList() {
-  const rows = rosterFor(byId('att_subject').value).map(st => {
+  const room = byId('att_room').value, roster = attRoster(byId('att_subject').value, room);
+  const rows = roster.map(st => {
     const status = ATTENDANCE_DRAFT[st.student_id];
     const mkBtn = (val) => { const a = ATT_STATUS[val], on = status === val;
       return `<button class="btn sm" style="margin:0;padding:8px 0;${on ? `background:${a.bg};color:${a.fg};border:1px solid ${a.bg};font-weight:600;` : 'background:#fff;color:var(--black);border:1px solid var(--line);'}" onclick="setAttendanceStatus('${st.student_id}','${val}')">${a.label}</button>`; };
@@ -800,19 +822,19 @@ function renderAttendanceList() {
       <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:8px;">${ATT_KEYS.map(mkBtn).join('')}</div>
     </div>`;
   }).join('');
-  const counts = ATT_KEYS.map(k => `${ATT_STATUS[k].label} <strong>${rosterFor(byId('att_subject').value).filter(st => ATTENDANCE_DRAFT[st.student_id] === k).length}</strong>`).join(' · ');
+  const counts = ATT_KEYS.map(k => `${ATT_STATUS[k].label} <strong>${roster.filter(st => ATTENDANCE_DRAFT[st.student_id] === k).length}</strong>`).join(' · ');
   const allBtns = ATT_KEYS.map(k => { const a = ATT_STATUS[k];
     return `<button class="btn sm" style="margin:0;padding:9px 0;background:${a.bg};color:${a.fg};border:none;font-weight:600;" onclick="setAllAttendance('${k}')">${a.label}ทั้งหมด</button>`; }).join('');
   const bulk = `<div style="background:#FAF4E4;border:1px solid var(--line);border-radius:12px;padding:10px;">
-    <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:7px;">กดครั้งเดียว ตั้งทุกคนพร้อมกัน</div>
+    <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:7px;">${room ? 'ห้อง ' + escapeHtml(room) + ' · ' : ''}${roster.length} คน — กดครั้งเดียว ตั้งทุกคนในห้องนี้พร้อมกัน</div>
     <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;">${allBtns}</div>
     <div class="meta" style="margin-top:6px;">ตั้งทั้งห้องแล้วค่อยแก้รายคนที่ต่างออกไปได้</div>
   </div>`;
-  byId('att_list').innerHTML = bulk + rows + `<div class="meta" style="margin-top:10px;font-size:calc(12.5px * var(--fs));">สรุป: ${counts}</div>`;
+  byId('att_list').innerHTML = bulk + (rows || '<p class="meta" style="margin-top:10px;">ไม่มีนักเรียนในห้องนี้</p>') + `<div class="meta" style="margin-top:10px;font-size:calc(12.5px * var(--fs));">สรุป: ${counts}</div>`;
 }
 
 function setAllAttendance(status) {
-  rosterFor(byId('att_subject').value).forEach(st => { ATTENDANCE_DRAFT[st.student_id] = status; });
+  attRoster(byId('att_subject').value, byId('att_room').value).forEach(st => { ATTENDANCE_DRAFT[st.student_id] = status; });
   renderAttendanceList();
 }
 function setAttendanceStatus(studentId, status) {
@@ -822,12 +844,15 @@ function setAttendanceStatus(studentId, status) {
 
 function saveAttendance() {
   const subjectId = byId('att_subject').value;
-  const date = byId('att_date').value;
-  const records = Object.keys(ATTENDANCE_DRAFT).map(sid => ({ student_id: sid, status: ATTENDANCE_DRAFT[sid] }));
+  const date = byId('att_date').value, room = byId('att_room').value;
   const idx = DEMO.attendance.findIndex(a => a.subject_id === subjectId && a.date === date);
+  const mine = new Set(Object.keys(ATTENDANCE_DRAFT));
+  const keep = idx >= 0 ? DEMO.attendance[idx].records.filter(r => !mine.has(r.student_id)) : [];   // รักษาผลของห้องอื่นในวันเดียวกัน
+  const records = keep.concat(Object.keys(ATTENDANCE_DRAFT).map(sid => ({ student_id: sid, status: ATTENDANCE_DRAFT[sid] })));
   const entry = { subject_id: subjectId, date, records };
   if (idx >= 0) DEMO.attendance[idx] = entry; else DEMO.attendance.push(entry);
-  byId('att_saved').textContent = 'บันทึกการเช็คชื่อวันที่ ' + fmtThaiDate(date) + ' เรียบร้อยแล้ว';
+  attBuildRooms(subjectId, date, room);
+  byId('att_saved').textContent = 'บันทึกการเช็คชื่อ' + (room ? ' ห้อง ' + room : '') + ' วันที่ ' + fmtThaiDate(date) + ' เรียบร้อยแล้ว';
 }
 
 function renderSubjectList() {
@@ -1436,7 +1461,7 @@ function showStudentDashboard() {
   const st = DEMO.student;
   render(`
     <div class="topbar">
-      <div><h1>${escapeHtml(st.full_name)}</h1><p>${escapeHtml(st.nickname)} · ${escapeHtml(st.level)} ${escapeHtml(st.room)} เลขที่ ${escapeHtml(st.seat_no)}</p></div>
+      <div style="display:flex;align-items:center;gap:12px;"><img class="brand-logo" src="logo.png" alt="" onerror="this.style.display='none'"><div><h1>${escapeHtml(st.full_name)}</h1><p>${escapeHtml(st.nickname)} · ${escapeHtml(st.level)} ${escapeHtml(st.room)} เลขที่ ${escapeHtml(st.seat_no)}</p></div></div>
       <button onclick="logout()">ออก</button>
     </div>
     <div class="tabs">
@@ -2964,7 +2989,7 @@ function resetDemo() { DEMO.subjects = []; DEMO.roster = []; DEMO.attendance = [
 
 /* ---------------- หน้าเข้าสู่ระบบ ---------------- */
 function showApiSetup(msg) {
-  render(`<div class="topbar"><div><h1>บุพสิกขา สิปปานุรักษ์</h1><p>ตั้งค่าครั้งแรก</p></div></div>
+  render(`<div class="topbar"><div style="display:flex;align-items:center;gap:12px;"><img class="brand-logo" src="logo.png" alt="" onerror="this.style.display='none'"><div><h1>บุพสิกขา สิปปานุรักษ์</h1><p>ตั้งค่าครั้งแรก</p></div></div></div>
     <div class="container"><div class="card">
       <h2>เชื่อมต่อระบบ</h2>
       <p class="meta" style="line-height:1.7;">วางลิงก์ Web App ของ Google Apps Script (ลงท้ายด้วย <strong>/exec</strong>) ที่ได้ตอน Deploy</p>
@@ -2980,7 +3005,7 @@ async function saveApiUrl() {
   try { await api('ping'); showLogin(); } catch (e) { byId('api_err').textContent = 'เชื่อมต่อไม่ได้: ' + e.message; }
 }
 function showLogin(msg) {
-  render(`<div class="topbar"><div><h1>บุพสิกขา สิปปานุรักษ์</h1><p>สำนักช่างเขียนจิตรกรรมไทยแบบประเพณี</p></div></div>
+  render(`<div class="topbar"><div style="display:flex;align-items:center;gap:12px;"><img class="brand-logo" src="logo.png" alt="" onerror="this.style.display='none'"><div><h1>บุพสิกขา สิปปานุรักษ์</h1><p>สำนักช่างเขียนจิตรกรรมไทยแบบประเพณี</p></div></div></div>
     <div class="container"><div class="card">
       <h2>เข้าสู่ระบบ</h2>
       <label>รหัสผู้ใช้ (นักเรียนใช้รหัสนักเรียน · ครูใช้ teacher)</label>
@@ -3026,7 +3051,7 @@ async function logout() {
 
 /* ---------------- เปลี่ยน PIN ---------------- */
 function showForcePin() {
-  render(`<div class="topbar"><div><h1>ตั้ง PIN ใหม่</h1><p>ครั้งแรกที่เข้าใช้ต้องเปลี่ยน PIN เริ่มต้น</p></div></div>
+  render(`<div class="topbar"><div style="display:flex;align-items:center;gap:12px;"><img class="brand-logo" src="logo.png" alt="" onerror="this.style.display='none'"><div><h1>ตั้ง PIN ใหม่</h1><p>ครั้งแรกที่เข้าใช้ต้องเปลี่ยน PIN เริ่มต้น</p></div></div></div>
     <div class="container"><div class="card">${pinFormHtml(true)}</div></div>`);
 }
 function pinFormHtml(forced) {
