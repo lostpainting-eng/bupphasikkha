@@ -3258,19 +3258,23 @@ function renderExamTab(s) {
   }).join('') || '<p style="color:#999;font-size:calc(13.5px * var(--fs));">ยังไม่มีชุดข้อสอบ</p>';
   byId('subject-tab-body').innerHTML = `
     <div class="card"><h2>ชุดข้อสอบทั้งหมด</h2>${rows}</div>
+    <div class="card"><h2>นำเข้าข้อสอบจากไฟล์ Excel</h2>
+      <p class="meta" style="margin:0 0 6px;">เขียนข้อสอบปรนัย 4 ตัวเลือกลงไฟล์ .xlsx ตามแบบฟอร์ม (คอลัมน์: ลำดับข้อสอบ, ชั้นปีที่, สมรรถนะ, คำถาม, ประเภท, ตัวเลือกที่ 1–4 พร้อมค่าคะแนนและผลลัพธ์ถูกผิด) แล้วเลือกไฟล์ ระบบจะแยกเป็นชุดข้อสอบตามชั้นปีและสมรรถนะให้อัตโนมัติ (ชุดละไม่เกิน 60 ข้อ) และแสดงตัวอย่างให้ตรวจก่อนสร้างเป็นฉบับร่าง · หรือใช้ไฟล์ Word (.docx) ที่พิมพ์ข้อสอบเป็น "1. คำถาม" ตามด้วยตัวเลือก ก. ข. ค. ง. และมีบรรทัดเฉลยท้ายเอกสาร เช่น "1. เฉลย ข"</p>
+      <button class="btn outline sm" style="margin:0 0 8px;" onclick="downloadExamTemplate()">⬇ ดาวน์โหลดไฟล์แบบฟอร์ม (.xlsx)</button>
+      <label for="exim_file" class="btn gold" style="display:block;text-align:center;cursor:pointer;margin:6px 0 8px;color:var(--black);font-size:calc(15px * var(--fs));">⬆ อัพโหลดไฟล์ข้อสอบ (.xlsx / .docx)</label>
+      <input id="exim_file" type="file" accept=".xlsx,.csv,.txt,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/csv" onchange="examImportPick('${s.subject_id}', this)">
+      <div id="exim_preview"></div>
+    </div>
+    <div class="card"><h2>เลือกข้อสอบไปจัดเป็นชุด</h2>
+      <p class="meta" style="margin:0 0 8px;">ข้อสอบที่นำเข้าหรือพิมพ์ไว้ในรายวิชานี้ทั้งหมดเป็น "คลังคำถาม" เลือกเฉพาะข้อที่ต้องการ (ติ๊กทีละข้อ ติ๊กทั้งชุด หรือสุ่มจำนวนที่ต้องการ) แล้วจัดเป็นชุดข้อสอบใหม่ ก่อนกดปล่อยให้นักเรียนสอบ</p>
+      <button class="btn gold" onclick="renderExamPicker('${s.subject_id}')">☑ เลือกข้อสอบมาจัดชุด (${s.exams.reduce((n, e) => n + e.questions.length, 0)} ข้อในคลัง)</button>
+    </div>
     <div class="card"><h2>สร้างชุดข้อสอบใหม่</h2>
       <p class="meta" style="margin:0 0 6px;">พิมพ์ข้อสอบปรนัยเอง (4 ตัวเลือก) ระบบตรวจและให้คะแนนความสามารถอัตโนมัติเมื่อนักเรียนส่ง</p>
       <label>ชื่อชุดข้อสอบ</label><input id="exam_title" placeholder="เช่น ทดสอบหน่วยที่ 1">
       <label>เวลาทำ (นาที ต่อคน — นับถอยหลังตั้งแต่เริ่มทำ)</label><input id="exam_duration" type="number" value="15" min="1" max="180" inputmode="numeric">
       <div id="exam_err" class="error-msg"></div>
       <button class="btn gold" onclick="createExamManual('${s.subject_id}')">+ สร้างชุดข้อสอบ แล้วเพิ่มข้อ</button>
-    </div>
-    <div class="card"><h2>นำเข้าข้อสอบจากไฟล์ Excel</h2>
-      <p class="meta" style="margin:0 0 6px;">เขียนข้อสอบปรนัย 4 ตัวเลือกลงไฟล์ .xlsx ตามแบบฟอร์ม (คอลัมน์: ลำดับข้อสอบ, ชั้นปีที่, สมรรถนะ, คำถาม, ประเภท, ตัวเลือกที่ 1–4 พร้อมค่าคะแนนและผลลัพธ์ถูกผิด) แล้วเลือกไฟล์ ระบบจะแยกเป็นชุดข้อสอบตามชั้นปีและสมรรถนะให้อัตโนมัติ (ชุดละไม่เกิน 60 ข้อ) และแสดงตัวอย่างให้ตรวจก่อนสร้างเป็นฉบับร่าง · หรือใช้ไฟล์ Word (.docx) ที่พิมพ์ข้อสอบเป็น "1. คำถาม" ตามด้วยตัวเลือก ก. ข. ค. ง. และมีบรรทัดเฉลยท้ายเอกสาร เช่น "1. เฉลย ข"</p>
-      <button class="btn outline sm" style="margin:0 0 8px;" onclick="downloadExamTemplate()">⬇ ดาวน์โหลดไฟล์แบบฟอร์ม (.xlsx)</button>
-      <label>เลือกไฟล์ข้อสอบ</label>
-      <input id="exim_file" type="file" accept=".xlsx,.csv,.txt,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/csv" onchange="examImportPick('${s.subject_id}', this)">
-      <div id="exim_preview"></div>
     </div>`;
 }
 function createExamManual(sid) {
@@ -3458,7 +3462,8 @@ async function examImportPick(sid, inp) {
   const box = byId('exim_preview'), f = inp.files && inp.files[0];
   EXAM_IMPORT = null; box.innerHTML = '';
   if (!f) return;
-  box.innerHTML = '<p class="meta">กำลังอ่านไฟล์…</p>';
+  inp.value = '';
+  box.innerHTML = '<p class="meta">กำลังอ่านไฟล์: ' + escapeHtml(f.name) + '…</p>';
   try {
     let rows;
     if (/\.xlsx$/i.test(f.name)) rows = await xlsxFirstSheetRows(await f.arrayBuffer());
@@ -3524,6 +3529,76 @@ async function downloadExamTemplate() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'แบบฟอร์มนำเข้าข้อสอบ.xlsx';
     document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   } catch (e) { toast('สร้างไฟล์แบบฟอร์มไม่สำเร็จ: ' + (e.message || e), true); }
+}
+/* ---------------- เลือกข้อจากคลังคำถามของรายวิชา ไปจัดเป็นชุดข้อสอบ ---------------- */
+let EXAM_PICK = null;
+function renderExamPicker(sid) {
+  const s = findSubject(sid);
+  if (!s.exams.some(e => e.questions.length)) { toast('ยังไม่มีคำถามในรายวิชานี้ — นำเข้าไฟล์ข้อสอบก่อน', true); return; }
+  EXAM_PICK = { sid, sel: new Set() };
+  const secs = s.exams.map((ex, ei) => ex.questions.length ? `<div class="card" data-set="${ei}" style="margin-bottom:10px;">
+      <div style="display:flex;align-items:center;gap:8px;"><input type="checkbox" onchange="examPickSet(${ei}, this.checked)" title="เลือกทั้งชุด (เฉพาะข้อที่มองเห็น)"><strong style="flex:1;min-width:0;">${escapeHtml(ex.title)}</strong><span class="badge">${ex.questions.length} ข้อ</span></div>
+      ${ex.questions.map((q, qi) => `<label class="pk-row" data-set="${ei}" data-text="${escapeHtml((q.question + ' ' + q.choices.join(' ')).toLowerCase())}" style="display:flex;gap:8px;align-items:flex-start;margin:0;padding:8px 0;border-top:1px solid #EEE3C8;font-size:calc(13.5px * var(--fs));color:#222;cursor:pointer;">
+        <input type="checkbox" data-k="${ei}:${qi}" onchange="examPickToggle('${ei}:${qi}', this.checked)" style="margin-top:2px;">
+        <span style="flex:1;min-width:0;"><b>${qi + 1}.</b> ${escapeHtml(q.question)}<br><span class="meta">เฉลย ${'กขคง'[q.correct_index]}. ${escapeHtml(q.choices[q.correct_index])}</span></span></label>`).join('')}
+    </div>` : '').join('');
+  const setOpts = s.exams.map((ex, ei) => ex.questions.length ? `<option value="${ei}">${escapeHtml(ex.title)} (${ex.questions.length})</option>` : '').join('');
+  byId('subject-tab-body').innerHTML = `
+    <div class="card"><h2>เลือกข้อสอบมาจัดเป็นชุดใหม่</h2>
+      <label>ชื่อชุดข้อสอบใหม่</label><input id="pk_title" placeholder="เช่น ข้อสอบกลางภาค">
+      <label>เวลาทำ (นาที ต่อคน)</label><input id="pk_min" type="number" value="30" min="1" max="180" inputmode="numeric">
+      <label>แสดงเฉพาะชุด</label><select id="pk_set" onchange="examPickFilter()"><option value="">ทุกชุด</option>${setOpts}</select>
+      <label>ค้นหาในคำถาม/ตัวเลือก</label><input id="pk_q" placeholder="พิมพ์คำที่ต้องการ" oninput="examPickFilter()">
+      <div style="display:flex;gap:8px;align-items:flex-end;margin-top:6px;">
+        <div style="flex:1;"><label>สุ่มเลือกจำนวน (จากข้อที่มองเห็น)</label><input id="pk_n" type="number" value="10" min="1" max="60" inputmode="numeric"></div>
+        <button class="btn outline" style="margin:0;" onclick="examPickRandom()">🎲 สุ่ม</button>
+        <button class="btn outline" style="margin:0;" onclick="examPickClear()">ล้าง</button>
+      </div>
+      <div id="pk_err" class="error-msg"></div>
+      <div style="margin-top:8px;"><strong id="pk_count">เลือกแล้ว 0 ข้อ</strong> <span class="meta">(ชุดหนึ่งมีได้ไม่เกิน 60 ข้อ)</span></div>
+      <button class="btn gold" style="width:100%;margin-top:8px;" onclick="examPickCreate()">สร้างชุดข้อสอบจากข้อที่เลือก</button>
+    </div>
+    <div id="pk_list">${secs}</div>
+    <button class="btn gold" style="width:100%;margin-bottom:8px;" onclick="examPickCreate()">สร้างชุดข้อสอบจากข้อที่เลือก</button>
+    <button class="btn outline" style="width:100%;" onclick="openSubjectDetail('${sid}','exam')">← กลับหน้าคลังข้อสอบ</button>`;
+}
+function examPickRows() { return [...document.querySelectorAll('#pk_list .pk-row')]; }
+function examPickCount() { const n = EXAM_PICK ? EXAM_PICK.sel.size : 0; const el = byId('pk_count'); if (el) el.textContent = 'เลือกแล้ว ' + n + ' ข้อ'; }
+function examPickToggle(k, on) { if (!EXAM_PICK) return; if (on) EXAM_PICK.sel.add(k); else EXAM_PICK.sel.delete(k); examPickCount(); }
+function examPickFilter() {
+  const q = (byId('pk_q').value || '').trim().toLowerCase(), st = byId('pk_set').value;
+  examPickRows().forEach(r => { const ok = (st === '' || r.dataset.set === st) && (!q || r.dataset.text.includes(q)); r.style.display = ok ? 'flex' : 'none'; });
+  document.querySelectorAll('#pk_list .card[data-set]').forEach(c => { c.style.display = [...c.querySelectorAll('.pk-row')].some(r => r.style.display !== 'none') ? '' : 'none'; });
+}
+function examPickSet(ei, on) {
+  examPickRows().filter(r => r.dataset.set === String(ei) && r.style.display !== 'none').forEach(r => { const cb = r.querySelector('input'); cb.checked = on; examPickToggle(cb.dataset.k, on); });
+}
+function examPickClear() { examPickRows().forEach(r => { r.querySelector('input').checked = false; }); document.querySelectorAll('#pk_list .card[data-set] > div input').forEach(c => { c.checked = false; }); if (EXAM_PICK) EXAM_PICK.sel.clear(); examPickCount(); }
+function examPickRandom() {
+  const n = Math.round(Number(byId('pk_n').value)), vis = examPickRows().filter(r => r.style.display !== 'none');
+  if (!(n >= 1)) { byId('pk_err').textContent = 'ใส่จำนวนที่ต้องการสุ่ม'; return; }
+  byId('pk_err').textContent = '';
+  examPickClear();
+  for (let i = vis.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [vis[i], vis[j]] = [vis[j], vis[i]]; }
+  vis.slice(0, Math.min(n, 60)).forEach(r => { const cb = r.querySelector('input'); cb.checked = true; examPickToggle(cb.dataset.k, true); });
+  if (n > vis.length) byId('pk_err').textContent = 'มีข้อให้สุ่มเพียง ' + vis.length + ' ข้อ — เลือกให้ทั้งหมดแล้ว';
+}
+function examPickCreate() {
+  if (!EXAM_PICK) return;
+  const s = findSubject(EXAM_PICK.sid), title = byId('pk_title').value.trim(), dur = Math.round(Number(byId('pk_min').value)), err = byId('pk_err');
+  const fail = m => { err.textContent = m; err.scrollIntoView({ block: 'center' }); };
+  if (!title) return fail('ตั้งชื่อชุดข้อสอบใหม่ก่อน');
+  if (!(dur >= 1 && dur <= 180)) return fail('เวลาต้องอยู่ระหว่าง 1–180 นาที');
+  const keys = [...EXAM_PICK.sel].map(k => k.split(':').map(Number)).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (!keys.length) return fail('ยังไม่ได้เลือกข้อสอบ');
+  if (keys.length > 60) return fail('เลือกได้ไม่เกิน 60 ข้อต่อชุด (ตอนนี้ ' + keys.length + ' ข้อ)');
+  const questions = keys.map(([ei, qi]) => { const q = s.exams[ei].questions[qi]; return { question: q.question, choices: q.choices.slice(), correct_index: q.correct_index }; });
+  s.exams.push({ exam_id: shortId('EX'), title, duration_minutes: dur, status: 'draft', questions });
+  const idx = s.exams.length - 1;
+  EXAM_PICK = null;
+  persistExam(s.subject_id, idx);
+  toast('สร้างชุด "' + title + '" จาก ' + questions.length + ' ข้อแล้ว — ตรวจทานก่อนปล่อยสอบ');
+  renderExamReview(s.subject_id, idx);
 }
 function blankQuestion() { return { question: '', choices: ['', '', '', ''], correct_index: 0 }; }
 function addExamQuestion(sid, idx) {
