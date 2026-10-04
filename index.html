@@ -3264,6 +3264,13 @@ function renderExamTab(s) {
       <label>เวลาทำ (นาที ต่อคน — นับถอยหลังตั้งแต่เริ่มทำ)</label><input id="exam_duration" type="number" value="15" min="1" max="180" inputmode="numeric">
       <div id="exam_err" class="error-msg"></div>
       <button class="btn gold" onclick="createExamManual('${s.subject_id}')">+ สร้างชุดข้อสอบ แล้วเพิ่มข้อ</button>
+    </div>
+    <div class="card"><h2>นำเข้าข้อสอบจากไฟล์ Excel</h2>
+      <p class="meta" style="margin:0 0 6px;">เตรียมข้อสอบปรนัย 4 ตัวเลือกในไฟล์ .xlsx หรือ .csv แล้วเลือกไฟล์ ระบบจะแสดงตัวอย่างให้ตรวจก่อนสร้างเป็นชุดข้อสอบฉบับร่าง (นำเข้าได้ไม่เกิน 60 ข้อ)</p>
+      <button class="btn outline sm" style="margin:0 0 8px;" onclick="downloadExamTemplate()">⬇ ดาวน์โหลดไฟล์แบบฟอร์ม (.xlsx)</button>
+      <label>เลือกไฟล์ข้อสอบ</label>
+      <input id="exim_file" type="file" accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" onchange="examImportPick('${s.subject_id}', this)">
+      <div id="exim_preview"></div>
     </div>`;
 }
 function createExamManual(sid) {
@@ -3274,6 +3281,153 @@ function createExamManual(sid) {
   const idx = s.exams.length - 1;
   persistExam(sid, idx);
   renderExamReview(sid, idx);
+}
+/* ---------------- นำเข้าข้อสอบจากไฟล์ Excel / CSV ---------------- */
+let EXAM_IMPORT = null;
+function _xlsxColIndex(ref) { const m = /^([A-Z]+)/i.exec(ref || ''); if (!m) return 0; let n = 0; for (const ch of m[1].toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; }
+async function xlsxFirstSheetRows(buf) {
+  if (typeof JSZip === 'undefined') throw new Error('โหลดตัวอ่านไฟล์ไม่สำเร็จ ลองเปิดแอปใหม่');
+  let zip; try { zip = await JSZip.loadAsync(buf); } catch (e) { throw new Error('อ่านไฟล์ไม่ได้ — ต้องเป็นไฟล์ .xlsx (ถ้าเป็น .xls เก่า ให้เปิดใน Excel แล้ว บันทึกเป็น .xlsx ก่อน)'); }
+  const parse = t => new DOMParser().parseFromString(t, 'application/xml');
+  const shared = [];
+  const ssf = zip.file('xl/sharedStrings.xml');
+  if (ssf) {
+    const d = parse(await ssf.async('string'));
+    for (const si of d.getElementsByTagName('si')) {
+      let t = '';
+      for (const ch of si.children) {
+        if (ch.tagName === 't') t += ch.textContent;
+        else if (ch.tagName === 'r') for (const x of ch.children) if (x.tagName === 't') t += x.textContent;
+      }
+      shared.push(t);
+    }
+  }
+  let path = '';
+  const wbf = zip.file('xl/workbook.xml'), relf = zip.file('xl/_rels/workbook.xml.rels');
+  if (wbf && relf) {
+    const w = parse(await wbf.async('string')), sh = w.getElementsByTagName('sheet')[0];
+    const rid = sh && (sh.getAttribute('r:id') || sh.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id'));
+    const r = parse(await relf.async('string'));
+    for (const x of r.getElementsByTagName('Relationship')) if (x.getAttribute('Id') === rid) { const t = x.getAttribute('Target') || ''; path = t.startsWith('/') ? t.slice(1) : 'xl/' + t.replace(/^\.\//, ''); }
+  }
+  if (!path || !zip.file(path)) { const names = Object.keys(zip.files).filter(n => /^xl\/worksheets\/[^/]+\.xml$/.test(n)).sort(); path = names[0]; }
+  if (!path) throw new Error('ไม่พบแผ่นงานในไฟล์');
+  const d = parse(await zip.file(path).async('string'));
+  const rows = [];
+  for (const row of d.getElementsByTagName('row')) {
+    const cells = [];
+    for (const c of row.getElementsByTagName('c')) {
+      const idx = _xlsxColIndex(c.getAttribute('r')), t = c.getAttribute('t');
+      let val = '';
+      if (t === 'inlineStr') val = [...c.getElementsByTagName('t')].map(x => x.textContent).join('');
+      else { const v = c.getElementsByTagName('v')[0]; val = v ? v.textContent : ''; if (t === 's') val = shared[parseInt(val, 10)] ?? ''; }
+      cells[idx] = val;
+    }
+    rows.push(Array.from(cells, v => v == null ? '' : String(v)));
+  }
+  return rows;
+}
+function csvRows(text) {
+  text = text.replace(/^\uFEFF/, '');
+  const first = text.split(/\r?\n/)[0] || '', delim = (first.split('\t').length > first.split(',').length) ? '\t' : (first.split(';').length > first.split(',').length ? ';' : ',');
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === delim) { row.push(cur); cur = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cur); rows.push(row); row = []; cur = ''; }
+    else cur += ch;
+  }
+  if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+function examAnswerIndex(raw, choices) {
+  let a = String(raw == null ? '' : raw).trim();
+  if (!a) return -1;
+  const k = a.replace(/[\s.)\]:：]/g, '').replace(/^(ข้อ|ตัวเลือก|choice|ans)/i, '').toUpperCase();
+  const map = { 'ก': 0, 'ข': 1, 'ค': 2, 'ง': 3, 'A': 0, 'B': 1, 'C': 2, 'D': 3, '1': 0, '2': 1, '3': 2, '4': 3, '1.0': 0, '2.0': 1, '3.0': 2, '4.0': 3 };
+  if (k in map) return map[k];
+  const hit = choices.findIndex(c => c.trim() && c.trim() === a);
+  return hit;
+}
+function examRowsToQuestions(rows) {
+  rows = rows.map(r => r.map(c => String(c == null ? '' : c).trim())).filter(r => r.some(c => c));
+  const questions = [], issues = [];
+  if (!rows.length) return { questions, issues: ['ไฟล์ว่างเปล่า'] };
+  let start = 0, off = 0;
+  const hdrIdx = rows[0].findIndex(c => /คำถาม|โจทย์|question/i.test(c));
+  if (hdrIdx >= 0) { start = 1; off = hdrIdx; }
+  rows.slice(start).forEach((r, i) => {
+    const no = i + 1 + start, o = hdrIdx >= 0 ? off : ((/^\d+(\.0)?$/.test(r[0]) && r.length >= 7) ? 1 : 0);
+    const q = r[o] || '', ch = [r[o + 1] || '', r[o + 2] || '', r[o + 3] || '', r[o + 4] || ''], ans = r[o + 5] || '';
+    const label = 'แถว ' + (no + (hdrIdx >= 0 ? 0 : 0)) + ': ';
+    if (!q) { issues.push(label + 'ไม่มีคำถาม — ข้าม'); return; }
+    if (ch.some(c => !c)) { issues.push(label + 'ตัวเลือกไม่ครบ 4 ข้อ — ข้าม'); return; }
+    const ci = examAnswerIndex(ans, ch);
+    if (ci < 0 || ci > 3) { issues.push(label + 'เฉลยไม่ถูกต้อง (ใช้ ก/ข/ค/ง หรือ A–D หรือ 1–4) — ข้าม'); return; }
+    questions.push({ question: q, choices: ch, correct_index: ci });
+  });
+  return { questions, issues };
+}
+async function examImportPick(sid, inp) {
+  const box = byId('exim_preview'), f = inp.files && inp.files[0];
+  EXAM_IMPORT = null; box.innerHTML = '';
+  if (!f) return;
+  box.innerHTML = '<p class="meta">กำลังอ่านไฟล์…</p>';
+  try {
+    let rows;
+    if (/\.xlsx$/i.test(f.name)) rows = await xlsxFirstSheetRows(await f.arrayBuffer());
+    else if (/\.(csv|txt)$/i.test(f.name)) rows = csvRows(new TextDecoder('utf-8').decode(await f.arrayBuffer()));
+    else throw new Error('รองรับเฉพาะไฟล์ .xlsx หรือ .csv (ถ้าเป็น .xls ให้บันทึกเป็น .xlsx ก่อน)');
+    const { questions, issues } = examRowsToQuestions(rows);
+    if (!questions.length) { box.innerHTML = '<div class="error-msg">ไม่พบข้อสอบที่นำเข้าได้</div>' + (issues.length ? '<p class="meta">' + issues.slice(0, 8).map(escapeHtml).join('<br>') + '</p>' : ''); return; }
+    let extra = '';
+    if (questions.length > 60) { issues.push('มี ' + questions.length + ' ข้อ — นำเข้าเฉพาะ 60 ข้อแรก'); questions.length = 60; }
+    EXAM_IMPORT = { sid, questions, name: f.name.replace(/\.[^.]+$/, '') };
+    const sample = questions.slice(0, 3).map((q, i) => `<div style="margin:6px 0;"><strong>${i + 1}. ${escapeHtml(q.question)}</strong><br>${q.choices.map((c, ci) => `<span class="meta" style="${ci === q.correct_index ? 'color:#8B2635;font-weight:600;' : ''}">${'กขคง'[ci]}. ${escapeHtml(c)}${ci === q.correct_index ? ' ✓' : ''}</span>`).join('<br>')}</div>`).join('');
+    box.innerHTML = `<div style="background:#FFF4DC;border-radius:10px;padding:10px;margin-top:8px;">
+      <strong>พบข้อสอบที่นำเข้าได้ ${questions.length} ข้อ</strong>${issues.length ? ` <span class="badge red">ข้าม/แจ้งเตือน ${issues.length}</span>` : ''}
+      ${sample}${questions.length > 3 ? `<p class="meta">…และอีก ${questions.length - 3} ข้อ</p>` : ''}
+      ${issues.length ? `<p class="meta" style="color:#8B2635;">${issues.slice(0, 8).map(escapeHtml).join('<br>')}${issues.length > 8 ? '<br>…' : ''}</p>` : ''}
+    </div>
+    <button class="btn gold" style="width:100%;margin-top:8px;" onclick="examImportConfirm()">ยืนยันนำเข้า ${questions.length} ข้อ เป็นชุดข้อสอบฉบับร่าง</button>`;
+  } catch (e) { box.innerHTML = '<div class="error-msg">' + escapeHtml(e.message || String(e)) + '</div>'; }
+}
+function examImportConfirm() {
+  if (!EXAM_IMPORT) return;
+  const { sid, questions, name } = EXAM_IMPORT, s = findSubject(sid);
+  const title = (byId('exam_title').value.trim()) || name || 'ข้อสอบนำเข้า';
+  const dur = Math.round(Number(byId('exam_duration').value));
+  if (!(dur >= 1 && dur <= 180)) { byId('exam_err').textContent = 'เวลาต้องอยู่ระหว่าง 1–180 นาที'; byId('exam_err').scrollIntoView({ block: 'center' }); return; }
+  s.exams.push({ exam_id: shortId('EX'), title, duration_minutes: dur, status: 'draft', questions });
+  const idx = s.exams.length - 1;
+  EXAM_IMPORT = null;
+  persistExam(sid, idx);
+  toast('นำเข้า ' + questions.length + ' ข้อแล้ว — ตรวจทานก่อนปล่อยสอบ');
+  renderExamReview(sid, idx);
+}
+async function downloadExamTemplate() {
+  try {
+    const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const rows = [
+      ['คำถาม', 'ตัวเลือก ก', 'ตัวเลือก ข', 'ตัวเลือก ค', 'ตัวเลือก ง', 'เฉลย (ก/ข/ค/ง)'],
+      ['ตัวอย่าง: ลายไทยพื้นฐานที่เป็นต้นแบบของลายอื่น ๆ คือลายใด', 'ลายกระหนก', 'ลายประจำยาม', 'ลายเครือเถา', 'ลายกนกเปลว', 'ก'],
+      ['ตัวอย่าง: เครื่องมือใดใช้ตัดเส้นภาพจิตรกรรมไทย', 'พู่กันขนาดเล็ก', 'แปรงทาสี', 'ลูกกลิ้ง', 'ไม้บรรทัด', 'ก']
+    ];
+    const col = i => String.fromCharCode(65 + i);
+    const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="60" customWidth="1"/><col min="2" max="5" width="28" customWidth="1"/><col min="6" max="6" width="18" customWidth="1"/></cols><sheetData>' +
+      rows.map((r, ri) => `<row r="${ri + 1}">` + r.map((v, ci) => `<c r="${col(ci)}${ri + 1}" t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`).join('') + '</row>').join('') + '</sheetData></worksheet>';
+    const z = new JSZip();
+    z.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
+    z.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+    z.file('xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="ข้อสอบ" sheetId="1" r:id="rId1"/></sheets></workbook>');
+    z.file('xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
+    z.file('xl/worksheets/sheet1.xml', sheet);
+    const blob = await z.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'แบบฟอร์มนำเข้าข้อสอบ.xlsx';
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  } catch (e) { toast('สร้างไฟล์แบบฟอร์มไม่สำเร็จ: ' + (e.message || e), true); }
 }
 function blankQuestion() { return { question: '', choices: ['', '', '', ''], correct_index: 0 }; }
 function addExamQuestion(sid, idx) {
