@@ -3828,7 +3828,12 @@ async function submitExam(timedOut) {
   const s = findSubject(R.subjectId), ex = s.exams[R.examIndex];
   byId('student-body').innerHTML = '<div class="card"><h2>กำลังส่งคำตอบ…</h2><p class="meta">อย่าปิดหน้านี้</p></div>';
   try {
-    const r = await api('submitExam', { exam_id: ex.exam_id, answers: R.answers, timed_out: !!timedOut });
+    let r, lastErr = null;
+    for (let k = 0; k < 3; k++) {   // เซิร์ฟเวอร์ Google ตอบหน้า error ชั่วคราวได้ → ลองส่งซ้ำเอง 3 ครั้ง
+      try { r = await api('submitExam', { exam_id: ex.exam_id, answers: R.answers, timed_out: !!timedOut }); lastErr = null; break; }
+      catch (e) { lastErr = e; if (!e.bad) break; await new Promise(res => setTimeout(res, 1500 * (k + 1))); }
+    }
+    if (lastErr) throw lastErr;
     const st = DEMO.student;
     st.exam_attempts.push({ subject_id: R.subjectId, exam_index: R.examIndex, score: r.score, total: r.total, timed_out: r.timed_out, submitted_at: new Date().toISOString() });
     st.ability.intelligence = r.progress.intelligence; st.ability.speed = r.progress.speed; st.rank_points = r.progress.rank_points;
@@ -3846,10 +3851,10 @@ async function submitExam(timedOut) {
     EXAM_RUNNER = null;
   } catch (e) {
     byId('student-body').innerHTML = `<div class="card"><h2>ส่งคำตอบไม่สำเร็จ</h2>
-      <p style="color:#8A1C1C;">${escapeHtml(e.network ? 'ออฟไลน์ หรือเชื่อมต่อเซิร์ฟเวอร์ไม่ได้' : e.message)}</p>
-      ${e.network ? `<p class="meta">คำตอบของคุณยังอยู่ในเครื่อง ต่อสัญญาณแล้วกดส่งอีกครั้ง</p><button class="btn gold" style="width:100%;" onclick="retrySubmitExam(${timedOut ? 'true' : 'false'})">ส่งอีกครั้ง</button>`
+      <p style="color:#8A1C1C;">${escapeHtml(e.network ? 'ออฟไลน์ หรือเชื่อมต่อเซิร์ฟเวอร์ไม่ได้' : e.bad ? 'เซิร์ฟเวอร์ไม่ตอบชั่วคราว (ลองส่งให้แล้ว 3 ครั้ง)' : e.message)}</p>
+      ${(e.network || e.bad) ? `<p class="meta">คำตอบของคุณยังอยู่ในเครื่อง ต่อสัญญาณแล้วกดส่งอีกครั้ง</p><button class="btn gold" style="width:100%;" onclick="retrySubmitExam(${timedOut ? 'true' : 'false'})">ส่งอีกครั้ง</button>`
               : '<button class="btn gold" style="width:100%;" onclick="EXAM_RUNNER=null;renderStudentExamList()">กลับไปหน้ารายการข้อสอบ</button>'}</div>`;
-    if (!e.network) EXAM_RUNNER = null;
+    if (!e.network && !e.bad) EXAM_RUNNER = null;
   }
 }
 function retrySubmitExam(timedOut) { if (EXAM_RUNNER) { EXAM_RUNNER.submitted = false; submitExam(timedOut); } }
