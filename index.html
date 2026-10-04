@@ -3266,10 +3266,10 @@ function renderExamTab(s) {
       <button class="btn gold" onclick="createExamManual('${s.subject_id}')">+ สร้างชุดข้อสอบ แล้วเพิ่มข้อ</button>
     </div>
     <div class="card"><h2>นำเข้าข้อสอบจากไฟล์ Excel</h2>
-      <p class="meta" style="margin:0 0 6px;">เขียนข้อสอบปรนัย 4 ตัวเลือกลงไฟล์ .xlsx ตามแบบฟอร์ม (คอลัมน์: ลำดับข้อสอบ, ชั้นปีที่, สมรรถนะ, คำถาม, ประเภท, ตัวเลือกที่ 1–4 พร้อมค่าคะแนนและผลลัพธ์ถูกผิด) แล้วเลือกไฟล์ ระบบจะแยกเป็นชุดข้อสอบตามชั้นปีและสมรรถนะให้อัตโนมัติ (ชุดละไม่เกิน 60 ข้อ) และแสดงตัวอย่างให้ตรวจก่อนสร้างเป็นฉบับร่าง</p>
+      <p class="meta" style="margin:0 0 6px;">เขียนข้อสอบปรนัย 4 ตัวเลือกลงไฟล์ .xlsx ตามแบบฟอร์ม (คอลัมน์: ลำดับข้อสอบ, ชั้นปีที่, สมรรถนะ, คำถาม, ประเภท, ตัวเลือกที่ 1–4 พร้อมค่าคะแนนและผลลัพธ์ถูกผิด) แล้วเลือกไฟล์ ระบบจะแยกเป็นชุดข้อสอบตามชั้นปีและสมรรถนะให้อัตโนมัติ (ชุดละไม่เกิน 60 ข้อ) และแสดงตัวอย่างให้ตรวจก่อนสร้างเป็นฉบับร่าง · หรือใช้ไฟล์ Word (.docx) ที่พิมพ์ข้อสอบเป็น "1. คำถาม" ตามด้วยตัวเลือก ก. ข. ค. ง. และมีบรรทัดเฉลยท้ายเอกสาร เช่น "1. เฉลย ข"</p>
       <button class="btn outline sm" style="margin:0 0 8px;" onclick="downloadExamTemplate()">⬇ ดาวน์โหลดไฟล์แบบฟอร์ม (.xlsx)</button>
       <label>เลือกไฟล์ข้อสอบ</label>
-      <input id="exim_file" type="file" accept=".xlsx,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" onchange="examImportPick('${s.subject_id}', this)">
+      <input id="exim_file" type="file" accept=".xlsx,.csv,.txt,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/csv" onchange="examImportPick('${s.subject_id}', this)">
       <div id="exim_preview"></div>
     </div>`;
 }
@@ -3408,6 +3408,52 @@ function examParseSheet(rows, fileName) {
   }
   return { sets, issues, platform: true };
 }
+async function docxParagraphs(buf) {
+  if (typeof JSZip === 'undefined') throw new Error('โหลดตัวอ่านไฟล์ไม่สำเร็จ ลองเปิดแอปใหม่');
+  let zip; try { zip = await JSZip.loadAsync(buf); } catch (e) { throw new Error('อ่านไฟล์ไม่ได้ — ต้องเป็นไฟล์ Word นามสกุล .docx (ถ้าเป็น .doc เก่า ให้เปิดใน Word แล้วบันทึกเป็น .docx ก่อน)'); }
+  const f = zip.file('word/document.xml');
+  if (!f) throw new Error('ไม่ใช่ไฟล์ Word (.docx) ที่อ่านได้');
+  const d = new DOMParser().parseFromString(await f.async('string'), 'application/xml');
+  const out = [];
+  for (const p of d.getElementsByTagName('w:p')) {
+    let t = '';
+    for (const n of p.getElementsByTagName('*')) {
+      if (n.tagName === 'w:t') t += n.textContent;
+      else if (n.tagName === 'w:tab') t += '\t';
+      else if (n.tagName === 'w:br') t += ' ';
+    }
+    out.push(t.replace(/\s+/g, ' ').trim());
+  }
+  return out;
+}
+function examParseWord(paras) {
+  const L = 'กขคงABCD', toIdx = ch => 'กขคง'.includes(ch) ? 'กขคง'.indexOf(ch) : 'ABCD'.indexOf(ch.toUpperCase());
+  const qs = new Map(), key = new Map(), issues = [];
+  let cur = null, last = null, inKey = false;
+  const title = paras.find(t => t) || '';
+  let minutes = 0; for (const t of paras) { const m = /เวลา(?:แนะนำ)?\s*(\d+)\s*นาที/.exec(t); if (m) { minutes = Number(m[1]); break; } }
+  for (const t of paras) {
+    if (!t) continue;
+    let m = /^(\d+)\s*[.)]\s*เฉลย\s*(?:คือ\s*)?([กขคงA-Da-d])/.exec(t);
+    if (m) { key.set(Number(m[1]), toIdx(m[2])); inKey = true; cur = null; continue; }
+    if (inKey) continue;
+    m = /^(\d+)\s*[.)]\s*(.+)$/.exec(t);
+    if (m) { cur = Number(m[1]); qs.set(cur, { q: m[2], o: [] }); last = 'q'; continue; }
+    m = /^([กขคงA-Da-d])\s*[.)]\s*(.+)$/.exec(t);
+    if (m && cur != null) { const i = toIdx(m[1]); qs.get(cur).o[i] = m[2]; last = i; continue; }
+    if (cur != null && last != null) { const q = qs.get(cur); if (last === 'q') q.q += ' ' + t; else if (q.o[last] != null) q.o[last] += ' ' + t; }
+  }
+  const questions = [];
+  [...qs.keys()].sort((a, b) => a - b).forEach(n => {
+    const q = qs.get(n), label = 'ข้อ ' + n + ': ';
+    if (q.o.length !== 4 || [0, 1, 2, 3].some(i => !q.o[i])) { issues.push(label + 'ตัวเลือก ก–ง ไม่ครบ 4 ข้อ — ข้าม'); return; }
+    if (!key.has(n) || !(key.get(n) >= 0 && key.get(n) <= 3)) { issues.push(label + 'ไม่พบเฉลยของข้อนี้ — ข้าม'); return; }
+    questions.push({ question: q.q, choices: q.o.slice(0, 4), correct_index: key.get(n) });
+  });
+  if (!qs.size) issues.push('ไม่พบข้อสอบในรูปแบบ "1. คำถาม" ตามด้วยตัวเลือก ก. ข. ค. ง.');
+  else if (!key.size) issues.push('ไม่พบบรรทัดเฉลย เช่น "1. เฉลย ข" ท้ายเอกสาร');
+  return { sets: questions.length ? [{ label: '', questions, docTitle: title, docMinutes: minutes }] : [], issues, platform: false };
+}
 async function examImportPick(sid, inp) {
   const box = byId('exim_preview'), f = inp.files && inp.files[0];
   EXAM_IMPORT = null; box.innerHTML = '';
@@ -3417,14 +3463,14 @@ async function examImportPick(sid, inp) {
     let rows;
     if (/\.xlsx$/i.test(f.name)) rows = await xlsxFirstSheetRows(await f.arrayBuffer());
     else if (/\.(csv|txt)$/i.test(f.name)) rows = csvRows(new TextDecoder('utf-8').decode(await f.arrayBuffer()));
-    else throw new Error('รองรับเฉพาะไฟล์ .xlsx หรือ .csv (ถ้าเป็น .xls ให้บันทึกเป็น .xlsx ก่อน)');
-    const { sets, issues, platform } = examParseSheet(rows, f.name);
+    else if (!/\.docx$/i.test(f.name)) throw new Error('รองรับไฟล์ .xlsx .csv หรือ Word .docx (ถ้าเป็น .xls/.doc เก่า ให้บันทึกเป็นรุ่นใหม่ก่อน)');
+    const { sets, issues, platform } = /\.docx$/i.test(f.name) ? examParseWord(await docxParagraphs(await f.arrayBuffer())) : examParseSheet(rows, f.name);
     const total = sets.reduce((n, x) => n + x.questions.length, 0);
     if (!total) { box.innerHTML = '<div class="error-msg">ไม่พบข้อสอบที่นำเข้าได้</div>' + (issues.length ? '<p class="meta">' + issues.slice(0, 8).map(escapeHtml).join('<br>') + '</p>' : ''); return; }
     const baseName = f.name.replace(/\.[^.]+$/, ''), typedTitle = (byId('exam_title').value || '').trim(), typedDur = Math.round(Number(byId('exam_duration').value)) || 15;
     sets.forEach(x => {
-      x.title = platform ? ((typedTitle ? typedTitle + ' ' : '') + (x.label || baseName)) : (typedTitle || baseName || 'ข้อสอบนำเข้า');
-      x.minutes = platform ? Math.max(1, Math.min(180, x.questions.length)) : Math.max(1, Math.min(180, typedDur));
+      x.title = platform ? ((typedTitle ? typedTitle + ' ' : '') + (x.label || baseName)) : (typedTitle || x.docTitle || baseName || 'ข้อสอบนำเข้า');
+      x.minutes = platform ? Math.max(1, Math.min(180, x.questions.length)) : Math.max(1, Math.min(180, x.docMinutes || typedDur));
     });
     EXAM_IMPORT = { sid, sets };
     const rowsHtml = sets.map((x, i) => `<div style="border-top:1px solid #E7D9B8;padding:8px 0;">
