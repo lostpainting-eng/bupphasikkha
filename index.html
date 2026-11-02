@@ -934,13 +934,76 @@ function studentHeaderRow(st, opt) {
     </div>`;
 }
 
+/* ---------- กลุ่มผู้เรียน: ตัวกรอง + ล็อกกลุ่มกับรายวิชา ---------- */
+let ROSTER_FILTER = { subject: '', group: '' };
+const NO_GROUP = '__none';
+function gArg(s) { return "decodeURIComponent('" + encodeURIComponent(s).replace(/'/g, '%27') + "')"; }
+function groupCounts() {
+  const m = new Map(); let none = 0;
+  DEMO.roster.forEach(st => { if (st.room) m.set(st.room, (m.get(st.room) || 0) + 1); else none++; });
+  return { list: Array.from(m.entries()).sort((a, b) => String(a[0]).localeCompare(String(b[0]), 'th', { numeric: true })), none };
+}
+function rosterFilterState() {
+  const f = ROSTER_FILTER, s = f.subject ? findSubject(f.subject) : null;
+  if (f.subject && !s) f.subject = '';
+  const locked = !!(s && s.room);
+  return { s, locked, group: locked ? s.room : f.group };
+}
+function rosterView() {
+  const g = rosterFilterState().group;
+  return DEMO.roster.filter(x => !g || (g === NO_GROUP ? !x.room : x.room === g));
+}
+function rosterFilterBar(shown) {
+  const fs = rosterFilterState(), gc = groupCounts(), total = DEMO.roster.length;
+  const subjOpts = '<option value="">ทุกรายวิชา</option>' + DEMO.subjects.map(s => `<option value="${escapeHtml(s.subject_id)}" ${s.subject_id === ROSTER_FILTER.subject ? 'selected' : ''}>${escapeHtml(s.subject_name)}${s.room ? ' 🔒 ' + escapeHtml(s.room) : ''}</option>`).join('');
+  const chip = (label, n, g, on) => `<button class="btn sm ${on ? 'gold' : 'outline'}" style="margin:0;" onclick="setRosterGroup(${gArg(g)})">${escapeHtml(label)} <span class="meta">(${n})</span></button>`;
+  let groupHtml;
+  if (fs.locked) {
+    groupHtml = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <span class="btn sm gold" style="margin:0;cursor:default;">🔒 ${escapeHtml(fs.s.room)} <span class="meta">(${shown} คน)</span></span>
+      <span class="meta">กลุ่มถูกล็อกไว้กับวิชานี้</span>
+      <button class="btn outline sm" style="margin:0;" onclick="rosterUnlockGroup()">เปลี่ยน/ปลดล็อกกลุ่ม</button></div>`;
+  } else {
+    const chips = [chip('ทั้งหมด', total, '', !fs.group)].concat(gc.list.map(([r, n]) => chip(r, n, r, fs.group === r)));
+    if (gc.none) chips.push(chip('ไม่ระบุกลุ่ม', gc.none, NO_GROUP, fs.group === NO_GROUP));
+    const canLock = fs.s && fs.group && fs.group !== NO_GROUP;
+    groupHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap;">${chips.join('')}</div>
+      ${canLock ? `<button class="btn gold sm" style="margin-top:8px;" onclick="rosterLockGroup()">🔒 ล็อกกลุ่ม ${escapeHtml(fs.group)} กับวิชา "${escapeHtml(fs.s.subject_name)}"</button>` : ''}
+      ${fs.s && !fs.group ? '<div class="meta" style="margin-top:6px;">วิชานี้ยังไม่ล็อกกลุ่ม — เลือกกลุ่มแล้วกดล็อกเพื่อผูกกับรายวิชา</div>' : ''}`;
+  }
+  return `<div class="card" style="padding:12px;">
+    <label style="margin-top:0;">รายวิชา <span class="meta">(เลือกวิชาแล้วกลุ่มจะแสดงตามที่ล็อกไว้)</span></label>
+    <select onchange="setRosterSubject(this.value)">${subjOpts}</select>
+    <label>กลุ่มผู้เรียน</label>${groupHtml}
+    <div class="meta" style="margin-top:8px;">แสดง ${shown} จาก ${total} คน</div></div>`;
+}
+function setRosterSubject(id) { ROSTER_FILTER.subject = id || ''; ROSTER_FILTER.group = ''; renderTeacherRoster(); }
+function setRosterGroup(g) { ROSTER_FILTER.group = g || ''; renderTeacherRoster(); }
+function rosterLockGroup() {
+  const fs = rosterFilterState(); if (!fs.s || !fs.group || fs.group === NO_GROUP) return;
+  setSubjectGroup(fs.s.subject_id, fs.group); renderTeacherRoster();
+}
+function rosterUnlockGroup() {
+  const fs = rosterFilterState(); if (!fs.s) return;
+  if (!confirm('ปลดล็อกกลุ่ม ' + fs.s.room + ' จากวิชา "' + fs.s.subject_name + '" ?\n(ข้อมูลเช็คชื่อ/คะแนนเดิมไม่หาย)')) return;
+  const g = fs.s.room; setSubjectGroup(fs.s.subject_id, ''); ROSTER_FILTER.group = g; renderTeacherRoster();
+}
+
 function renderTeacherRoster() {
-  const cards = DEMO.roster.map(st => {
+  const view = rosterView(), fs = rosterFilterState(), gc = groupCounts();
+  const card = st => {
     const attTotal = DEMO.attendance.filter(a => a.records.some(r => r.student_id === st.student_id)).length;
     const attPresent = DEMO.attendance.filter(a => a.records.some(r => r.student_id === st.student_id && r.status === 'present')).length;
     return `<div class="card" style="cursor:pointer;padding:12px;" onclick="openStudentDetail('${st.student_id}')">${studentHeaderRow(st, { attPresent, attTotal })}</div>`;
-  }).join('');
-  byId('teacher-body').innerHTML = `<h2 style="color:var(--red);margin:4px 0 12px;">ศิษย์ในสำนัก — คลิกการ์ดเพื่อดูรายละเอียด</h2>${cards}`;
+  };
+  let cards;
+  if (!fs.group && (gc.list.length + (gc.none ? 1 : 0)) > 1) {
+    const sections = gc.list.map(([r]) => [r, view.filter(x => x.room === r)]);
+    if (gc.none) sections.push(['ไม่ระบุกลุ่ม', view.filter(x => !x.room)]);
+    cards = sections.filter(x => x[1].length).map(([r, arr]) => `<div style="font-weight:700;color:var(--red);margin:16px 0 8px;font-size:calc(17px * var(--fs));">กลุ่ม ${escapeHtml(r)} <span class="meta">· ${arr.length} คน</span></div>${arr.map(card).join('')}`).join('');
+  } else cards = view.map(card).join('');
+  if (!view.length && DEMO.roster.length) cards = '<div class="card"><p style="color:#999;margin:0;">ไม่มีนักเรียนในกลุ่มนี้</p></div>';
+  byId('teacher-body').innerHTML = `<h2 style="color:var(--red);margin:4px 0 12px;">ศิษย์ในสำนัก — คลิกการ์ดเพื่อดูรายละเอียด</h2>${DEMO.roster.length ? rosterFilterBar(view.length) : ''}${cards}`;
 }
 
 // ---------- รายละเอียดศิษย์รายคน: ประวัติเข้าเรียน / ส่งงาน / สอบ ----------
@@ -1080,6 +1143,7 @@ function renderAttendanceTab() {
       <h2>เช็คชื่อเข้าเรียน</h2>
       <label>รายวิชา</label>
       <select id="att_subject" onchange="onAttSubjectChange()">${subjectOptions}</select>
+      <div id="att_group_box"></div>
       <div id="att_day_hint" class="meta" style="margin-top:4px;color:var(--red);min-height:18px;"></div>
       <label>วันที่</label>
       ${dateField('att_date', defaultDate, 'validateAttDate')}
@@ -1092,9 +1156,41 @@ function renderAttendanceTab() {
   onAttSubjectChange();
 }
 
+function renderAttGroupBox(editing) {
+  const box = byId('att_group_box'); if (!box) return;
+  const id = byId('att_subject') && byId('att_subject').value, s = findSubject(id);
+  if (!s) { box.innerHTML = ''; return; }
+  const n = rosterFor(id).length, wrapStyle = 'margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:#FAF4E4;';
+  if (s.room && !editing) {
+    box.innerHTML = `<div style="${wrapStyle}display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <span>🔒 กลุ่มผู้เรียน <strong>${escapeHtml(s.room)}</strong> · ${n} คน</span>
+      <span class="meta">ล็อกกับรายวิชานี้</span>
+      <button class="btn outline sm" style="margin:0 0 0 auto;" onclick="renderAttGroupBox(true)">เปลี่ยนกลุ่ม</button></div>`;
+    return;
+  }
+  const rooms = distinctRooms();
+  box.innerHTML = `<div style="${wrapStyle}">
+    <div class="meta" style="color:var(--red);">${s.room ? 'เปลี่ยนกลุ่มผู้เรียนของวิชานี้' : 'วิชานี้ยังไม่ได้ล็อกกลุ่มผู้เรียน — ตอนนี้แสดงนักเรียนทุกคน (' + n + ' คน)'}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px;">
+      <select id="att_lock_group" style="flex:1;min-width:150px;"><option value="">${s.room ? 'ไม่ล็อก (ทุกกลุ่ม)' : 'เลือกกลุ่มผู้เรียน…'}</option>${rooms.map(r => `<option value="${escapeHtml(r)}" ${s.room === r ? 'selected' : ''}>${escapeHtml(r)}</option>`).join('')}</select>
+      <button class="btn gold sm" style="margin:0;" onclick="attLockGroup()">🔒 ล็อกกลุ่มกับวิชานี้</button>
+      ${s.room ? '<button class="btn outline sm" style="margin:0;" onclick="renderAttGroupBox(false)">ยกเลิก</button>' : ''}
+    </div></div>`;
+}
+function attLockGroup() {
+  const id = byId('att_subject').value, s = findSubject(id), v = byId('att_lock_group').value;
+  if (!s) return;
+  if (v === (s.room || '')) { renderAttGroupBox(false); return; }
+  if (!v && !s.room) { toast('เลือกกลุ่มผู้เรียนก่อน', true); return; }
+  if (s.room && DEMO.attendance.some(a => a.subject_id === id) && !confirm('วิชานี้มีการเช็คชื่อที่บันทึกไว้แล้ว\nเปลี่ยนกลุ่มแล้วรายชื่อที่แสดงจะเปลี่ยนตาม (ข้อมูลเช็คชื่อเดิมยังอยู่)\nยืนยันเปลี่ยนกลุ่ม?')) return;
+  setSubjectGroup(id, v);
+  onAttSubjectChange();
+}
+
 function onAttSubjectChange() {
   const subjectId = byId('att_subject').value;
   const s = DEMO.subjects.find(x => x.subject_id === subjectId);
+  renderAttGroupBox(false);
   const DAY_TH = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
   const hint = byId('att_day_hint');
   if (hint) {
@@ -1194,13 +1290,15 @@ function saveAttendance() {
   }
   const records = Object.keys(ATTENDANCE_DRAFT).map(sid => ({ student_id: sid, status: ATTENDANCE_DRAFT[sid] }));
   const idx = DEMO.attendance.findIndex(a => a.subject_id === subjectId && a.date === date);
+  // คงเรคคอร์ดเดิมของนักเรียนที่ไม่อยู่ในกลุ่มที่แสดงอยู่ (เช่น เปลี่ยนกลุ่มภายหลัง) ไม่ให้หาย
+  if (idx >= 0) DEMO.attendance[idx].records.forEach(r => { if (!(r.student_id in ATTENDANCE_DRAFT)) records.push(r); });
   const entry = { subject_id: subjectId, date, records };
   if (idx >= 0) DEMO.attendance[idx] = entry; else DEMO.attendance.push(entry);
   byId('att_saved').textContent = 'บันทึกการเช็คชื่อวันที่ ' + fmtThaiDate(date) + ' เรียบร้อยแล้ว';
 }
 
 function renderSubjectList() {
-  const chips = DEMO.subjects.map(s => `<span class="subj-chip" onclick="openSubjectDetail('${s.subject_id}')">${escapeHtml(s.subject_name)} <span class="badge">${escapeHtml(s.level)}</span></span>`).join('');
+  const chips = DEMO.subjects.map(s => `<span class="subj-chip" onclick="openSubjectDetail('${s.subject_id}')">${escapeHtml(s.subject_name)} <span class="badge">${escapeHtml(s.level)}</span>${s.room ? ` <span class="meta">🔒 ${escapeHtml(s.room)}</span>` : ''}</span>`).join('');
   byId('teacher-body').innerHTML = `
     ${renderLessonTodayCard()}
     ${renderLessonTodayJittCard()}
@@ -3473,7 +3571,7 @@ async function addSubjectDemo() {
 }
 wrap('renderSubjectList', function () {
   const rooms = distinctRooms(), anchor = byId('add_err'); if (!anchor) return;
-  anchor.insertAdjacentHTML('beforebegin', `<label>ห้อง/กลุ่มที่เรียนวิชานี้</label><select id="new_room"><option value="">ทุกห้อง (ทุกคนอยู่ในวิชานี้)</option>${rooms.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('')}</select>`);
+  anchor.insertAdjacentHTML('beforebegin', `<label>🔒 ล็อกกลุ่มผู้เรียนกับวิชานี้</label><select id="new_room"><option value="">ไม่ล็อก (ทุกกลุ่ม)</option>${rooms.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('')}</select>`);
 });
 wrap('openSubjectDetail', function (id) {
   const s = findSubject(id), card = byId('teacher-body').querySelector('.card'); if (!s || !card) return;
@@ -3483,8 +3581,8 @@ wrap('openSubjectDetail', function (id) {
   const dayBoxes = DAY_LABELS.map((d,i) => `<label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" class="edit_day_${id}" value="${i+1}" ${curDays.includes(i+1)?'checked':''}> ${d}</label>`).join('');
   const hpwVal = s.hours_per_week || '';
   card.insertAdjacentHTML('beforeend', `<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:8px;">
-    <label>ห้อง/กลุ่มที่เรียนวิชานี้ <span class="meta">(มีนักเรียน ${n} คน)</span></label>
-    <select onchange="pwaSetSubjectRoom('${id}', this.value)"><option value="">ทุกห้อง</option>${rooms.map(r => `<option value="${escapeHtml(r)}" ${s.room === r ? 'selected' : ''}>${escapeHtml(r)}</option>`).join('')}</select>
+    <label>🔒 กลุ่มผู้เรียนที่ล็อกกับวิชานี้ <span class="meta">(มีนักเรียน ${n} คน · ใช้ร่วมกับเช็คชื่อและรายงานคะแนน)</span></label>
+    <select onchange="pwaSetSubjectRoom('${id}', this.value)"><option value="">ไม่ล็อก (ทุกกลุ่ม)</option>${rooms.map(r => `<option value="${escapeHtml(r)}" ${s.room === r ? 'selected' : ''}>${escapeHtml(r)}</option>`).join('')}</select>
     <label style="margin-top:8px;">วันที่เรียน</label>
     <div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0;">${dayBoxes}</div>
     <label>ชั่วโมงต่อสัปดาห์</label>
@@ -3504,9 +3602,12 @@ function pwaSaveSubjectSchedule(id) {
   enqueue('subj|' + id, 'saveSubject', { subject: { subject_id: id, subject_code: s.subject_code, subject_name: s.subject_name, level: s.level, credit_hours: s.credit_hours, description: s.description, room: s.room || '', days_of_week: s.days_of_week, hours_per_week: s.hours_per_week } });
   const ok = byId('sched_ok_' + id); if (ok) { ok.textContent = '✓ บันทึกแล้ว'; setTimeout(() => { ok.textContent = ''; }, 2500); }
 }
+function setSubjectGroup(id, room) {
+  const s = findSubject(id); if (!s) return; s.room = room || '';
+  enqueue('subj|' + id, 'saveSubject', { subject: { subject_id: id, subject_code: s.subject_code, subject_name: s.subject_name, level: s.level, credit_hours: s.credit_hours, description: s.description, room: s.room, days_of_week: s.days_of_week || [], hours_per_week: s.hours_per_week || 0 } });
+}
 function pwaSetSubjectRoom(id, room) {
-  const s = findSubject(id); if (!s) return; s.room = room;
-  enqueue('subj|' + id, 'saveSubject', { subject: { subject_id: id, subject_code: s.subject_code, subject_name: s.subject_name, level: s.level, credit_hours: s.credit_hours, description: s.description, room, days_of_week: s.days_of_week || [], hours_per_week: s.hours_per_week || 0 } });
+  setSubjectGroup(id, room);
   openSubjectDetail(id, 'report');
 }
 async function pwaArchiveSubject(id) {
