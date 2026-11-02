@@ -3601,6 +3601,7 @@ wrap('openSubjectDetail', function (id) {
       <span id="sched_ok_${id}" style="color:var(--green,#4a7c3f);font-size:calc(13px * var(--fs));"></span>
     </div>
     <button class="btn outline sm" style="margin-top:8px;" onclick="courseAiOpen('existing','${id}')">✨ นำเข้าคำอธิบายรายวิชา (AI สร้างหน่วยการเรียนรู้/ชิ้นงาน/คะแนน)</button><div id="cai_box"></div>
+    <button class="btn outline sm" style="margin-top:8px;" onclick="planOpen('${id}','plan_box')">📅 แผนการจัดการเรียนรู้ → ตั้งสมรรถนะและคะแนน</button><div id="plan_box"></div>
     <button class="btn outline sm" id="arch_btn" style="margin-top:8px;" onclick="pwaArchiveSubject('${id}')">ซ่อนรายวิชานี้</button></div>`);
 });
 function pwaSaveSubjectSchedule(id) {
@@ -3792,12 +3793,13 @@ function courseAiSettingsToggle(forceOpen) {
 function courseAiProvChange() { const p = byId('cai_prov').value; byId('cai_model').placeholder = AI_PROVIDERS[p].model; }
 function courseAiSaveSettings() {
   LS.set('bps_ai_prov', byId('cai_prov').value); LS.set('bps_ai_key', byId('cai_key').value.trim()); LS.set('bps_ai_model', byId('cai_model').value.trim());
-  const ok = byId('cai_set_ok'); if (ok) { ok.textContent = '✓ บันทึกแล้ว'; setTimeout(() => { if (byId('cai_settings')) { byId('cai_settings').style.display = 'none'; byId('cai_settings').innerHTML = ''; } }, 900); }
+  const ok = byId('cai_set_ok'); if (ok) { ok.textContent = '✓ บันทึกแล้ว'; setTimeout(() => { ['cai_settings', 'pln_settings'].forEach(id => { const b = byId(id); if (b) { b.style.display = 'none'; b.innerHTML = ''; } }); }, 900); }
 }
 function courseAiClearKey() { LS.del('bps_ai_key'); const k = byId('cai_key'); if (k) k.value = ''; const ok = byId('cai_set_ok'); if (ok) ok.textContent = 'ลบคีย์แล้ว'; }
 function courseAiOpen(mode, sid) {
   const box = byId('cai_box'); if (!box) return;
   if (box.innerHTML.trim()) { courseAiClose(); return; }
+  planClose();
   COURSE_AI.mode = mode; COURSE_AI.sid = sid || ''; COURSE_AI.plan = null;
   box.innerHTML = courseAiPanelHtml();
   const s = sid ? findSubject(sid) : null;
@@ -3930,6 +3932,238 @@ async function courseAiApplyExisting() {
   openSubjectDetail(s.subject_id, hadAsg ? 'assignment' : 'report');
   toast(msg || 'ไม่ได้เลือกรายการใดให้นำไปใช้');
 }
+
+/* ---------------- แผนการจัดการเรียนรู้: นำเข้า → อ่านหน่วยการเรียนรู้ → ตั้งสมรรถนะและคะแนนอัตโนมัติ ---------------- */
+const PLAN = { sid: '', box: '', draft: null };
+function persistReportOf(s) {
+  const r = ensureReport(s), cfg = Object.assign({}, r), scores = cfg.scores || {}; delete cfg.scores;
+  enqueue('report|' + s.subject_id, 'saveReport', { subject_id: s.subject_id, config: cfg, scores });
+}
+function planGet(s) {
+  if (s && s.report && s.report.plan && Array.isArray(s.report.plan.units) && s.report.plan.units.length) return s.report.plan;
+  try { const p = JSON.parse(LS.get('bps_plan_' + s.subject_id) || 'null'); return p && Array.isArray(p.units) && p.units.length ? p : null; } catch (e) { return null; }
+}
+function planSave(s, plan) {
+  plan.saved_at = new Date().toISOString();
+  ensureReport(s).plan = plan;
+  LS.set('bps_plan_' + s.subject_id, JSON.stringify(plan));
+  persistReportOf(s);
+}
+function builtinPlanFor(s) {
+  const all = [LESSON_PLAN, LESSON_PLAN_JITT];
+  const p = all.find(x => x.subject_code && s.subject_code && x.subject_code === s.subject_code) || all.find(x => x.subject_name && String(s.subject_name || '').includes(x.subject_name));
+  return p || null;
+}
+function planFromBuiltin(p) {
+  return { source: 'builtin', semester: p.semester || '', hours_per_week: p.hours_per_week || null, total_sessions: p.total_sessions || null,
+    units: p.units.map(u => ({ unit: u.unit, name: u.name, sessions: u.sessions ? u.sessions.slice(0, 2) : null, hours: null, topics: u.topics.slice() })) };
+}
+function planAiPrompt(text) {
+  return `ช่วยอ่าน "แผนการจัดการเรียนรู้" ของรายวิชาด้านล่าง แล้วดึงโครงสร้างหน่วยการเรียนรู้ออกมา ตอบเป็น JSON เท่านั้น (ห้ามมีข้อความนอก JSON) เป็นภาษาไทย ตามโครงสร้างนี้:
+{
+ "semester": "เช่น 2/2569 หรือ null",
+ "hours_per_week": 0 หรือ null,
+ "total_sessions": 0 หรือ null,
+ "units": [ { "unit": 1, "name": "ชื่อหน่วยการเรียนรู้", "sessions": [ครั้งหรือสัปดาห์เริ่มต้น, ครั้งหรือสัปดาห์สิ้นสุด] หรือ null, "hours": 0 หรือ null, "topics": ["หัวข้อเนื้อหาย่อยของหน่วย"] } ]
+}
+กติกา:
+- ยึดตามข้อความที่ให้ ห้ามแต่งหน่วยที่ไม่มีในแผน เรียงตามลำดับที่สอน
+- ถ้าแผนแบ่งเป็นรายสัปดาห์/รายครั้ง ให้รวมแถวที่อยู่หน่วยเดียวกันเป็นหน่วยเดียว แล้วใส่ช่วง sessions
+- ถ้าแผนระบุจำนวนชั่วโมงของหน่วย ให้ใส่ hours ถ้าไม่ระบุให้ null
+- topics ตัดเลขหัวข้อนำหน้าออกได้ ไม่เกิน 10 หัวข้อต่อหน่วย
+
+แผนการจัดการเรียนรู้:
+"""
+${text.slice(0, 20000)}
+"""`;
+}
+function planNormalize(raw) {
+  raw = raw || {};
+  const units = (Array.isArray(raw.units) ? raw.units : []).slice(0, 20).map((u, i) => {
+    const se = Array.isArray(u && u.sessions) ? u.sessions.map(x => caiNum(x)) : [];
+    return { unit: caiNum(u && u.unit) || (i + 1), name: caiStr(u && u.name, 160), sessions: se.length === 2 && se[0] && se[1] && se[1] >= se[0] ? se : null,
+      hours: caiNum(u && u.hours), topics: caiList(u && u.topics, 10, 200) };
+  }).filter(u => u.name);
+  if (!units.length) throw new Error('AI อ่านไม่พบหน่วยการเรียนรู้ในแผน ลองวางข้อความให้ครบขึ้น');
+  return { source: 'ai', semester: caiStr(raw.semester, 20), hours_per_week: caiNum(raw.hours_per_week), total_sessions: caiNum(raw.total_sessions), units };
+}
+
+/* ---- อ่านหน่วย → 5 สมรรถนะ + คะแนน 70 ---- */
+const PLAN_THEORY_RE = /^(ความหมาย|ความเป็นมา|ความรู้|ความสำคัญ|ประเภท|การจำแนก|คุณค่า|กฎหมาย|หน่วยงาน|ขอบข่าย|ขอบเขต|หลักการ|องค์ประกอบ|พัฒนาการ|ปัญหา|ทฤษฎี)/;
+const PLAN_CREATIVE_RE = /(สร้างสรรค์|ออกแบบ|ประยุกต์|ต่อยอด|แนวคิด|ผลิตสื่อ|นำเสนอ)/;
+function planWeight(u) { return u.hours || (u.sessions && u.sessions.length === 2 ? Math.max(1, u.sessions[1] - u.sessions[0] + 1) : 1); }
+function planCleanTopic(t) { return String(t || '').replace(/^\s*\d+(\.\d+)*[.)]?\s*/, '').trim(); }
+function planShort(t, n) { t = String(t || '').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; }
+function planLeaves(plan, split) {
+  const out = [];
+  plan.units.forEach(u => {
+    const w = planWeight(u), tops = u.topics.map(planCleanTopic).filter(Boolean);
+    if (split && tops.length) tops.forEach(t => out.push({ unit: u, name: t, w: w / tops.length, theory: PLAN_THEORY_RE.test(t) }));
+    else out.push({ unit: u, name: u.name, w, topics: tops, theory: tops.length ? tops.filter(t => PLAN_THEORY_RE.test(t)).length * 2 >= tops.length : PLAN_THEORY_RE.test(u.name) });
+  });
+  return out;
+}
+function planBucket(leaves) {
+  const total = leaves.reduce((a, l) => a + l.w, 0) || leaves.length, out = [[], [], [], [], []];
+  let cum = 0;
+  leaves.forEach(l => { out[Math.min(4, Math.floor((cum + l.w / 2) / (total / 5)))].push(l); cum += l.w; });
+  return out;
+}
+function planGroupLabel(units) { return planShort(units.map(u => u.name).join(' / '), 100); }
+function planBuildComps(plan, slots) {
+  let leaves = planLeaves(plan, false);
+  if (leaves.length < 5) leaves = planLeaves(plan, true);
+  let buckets = planBucket(leaves);
+  if (leaves.length >= 5 && buckets.some(b => !b.length)) { buckets = [[], [], [], [], []]; leaves.forEach((l, i) => buckets[Math.floor(i * 5 / leaves.length)].push(l)); }
+  const comps = buckets.map((b, gi) => {
+    if (!b.length) return { unit: 'การประเมินผลรวมและการนำเสนอผลงาน', items: [{ name: 'การนำเสนอผลงาน', w: 1, kind: 'practice', focus: 'creative' }] };
+    let ls = b;
+    if (ls.length === 1 && ls[0].topics && ls[0].topics.length > 1) { const l = ls[0]; ls = l.topics.map(t => ({ unit: l.unit, name: t, w: l.w / l.topics.length, theory: PLAN_THEORY_RE.test(t) })); }
+    const cap = slots[gi];
+    if (ls.length > cap) {
+      const head = ls.slice(0, cap - 1), tail = ls.slice(cap - 1);
+      ls = head.concat([{ unit: tail[0].unit, name: tail.map(x => x.name).join(' และ '), w: tail.reduce((a, x) => a + x.w, 0), theory: tail.filter(x => x.theory).length * 2 >= tail.length }]);
+    }
+    const unitsIn = []; b.forEach(l => { if (!unitsIn.includes(l.unit)) unitsIn.push(l.unit); });
+    return { unit: planGroupLabel(unitsIn), items: ls.map(l => ({ name: planShort(l.name, 60), w: l.w, kind: l.theory ? 'theory' : 'practice', focus: PLAN_CREATIVE_RE.test(l.name) ? 'creative' : 'skill' })) };
+  });
+  comps.forEach(c => c.items.forEach(it => { it.max = it.w; delete it.w; }));
+  caiScaleTo70(comps);
+  return comps;
+}
+
+/* ---- ส่วนติดต่อผู้ใช้ ---- */
+function plnStatus(msg, bad) { const el = byId('pln_status'); if (el) { el.textContent = msg || ''; el.style.color = bad ? '#B3261E' : ''; } }
+function planClose() { ['plan_box', 'plan_box_rpt'].forEach(id => { const b = byId(id); if (b) b.innerHTML = ''; }); PLAN.draft = null; }
+function planPanelHtml(s) {
+  const bp = builtinPlanFor(s);
+  return `<div style="margin:8px 0 12px;padding:12px;border:1.5px solid var(--gold,#D4A82A);border-radius:12px;background:#FAF4E4;">
+    <div style="font-weight:700;color:var(--red);">📅 แผนการจัดการเรียนรู้ → สมรรถนะและคะแนน</div>
+    <div id="pln_cur" class="meta" style="margin:4px 0 8px;line-height:1.7;"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      ${bp ? `<button class="btn gold sm" style="margin:0;" onclick="planUseBuiltin()">ใช้แผนที่มีในแอพ (${escapeHtml(bp.subject_code)} · ${bp.units.length} หน่วย)</button>` : ''}
+      <button class="btn outline sm" style="margin:0;" onclick="planToggleImport()">⬆ นำเข้าแผนใหม่ (ไฟล์ / วางข้อความ)</button>
+      <button class="btn outline sm" style="margin:0;" onclick="planClose()">ปิด</button></div>
+    <div id="pln_import" style="display:none;margin-top:8px;">
+      <div class="meta" style="line-height:1.7;margin-bottom:6px;">เลือกไฟล์แผน (.docx / .txt) หรือวางข้อความแผนการจัดการเรียนรู้ ให้ AI อ่านแล้วแยกเป็นหน่วยการเรียนรู้</div>
+      <input type="file" accept=".docx,.txt,.md,text/plain" onchange="planFile(this)">
+      <textarea id="pln_text" rows="8" placeholder="วางแผนการจัดการเรียนรู้ที่นี่ (หน่วยที่ 1 … หัวข้อ … จำนวนชั่วโมง/ครั้งที่สอน)"></textarea>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+        <button class="btn gold sm" id="pln_btn" style="margin:0;" onclick="planRunAi()">✨ ให้ AI อ่านแผน</button>
+        <button class="btn outline sm" style="margin:0;" onclick="planSettingsToggle()">⚙ ตั้งค่า AI${aiCfg().key ? ' ✓' : ''}</button></div></div>
+    <div id="pln_status" class="meta" style="margin-top:6px;line-height:1.6;"></div>
+    <div id="pln_settings" style="display:none;"></div>
+    <div id="pln_units"></div><div id="pln_draft"></div></div>`;
+}
+function planState() {
+  const s = findSubject(PLAN.sid), el = byId('pln_cur'); if (!s || !el) return;
+  const p = planGet(s);
+  el.textContent = p ? 'แผนที่บันทึกไว้ของวิชานี้: ' + p.units.length + ' หน่วย' + (p.semester ? ' · ภาค ' + p.semester : '') + (p.source === 'builtin' ? ' (จากแผนในแอพ)' : p.source === 'ai' ? ' (นำเข้าด้วย AI)' : '') : 'ยังไม่มีแผนของวิชานี้ — นำเข้าแผนก่อน แล้วระบบจะอ่านหน่วยการเรียนรู้ไปตั้งสมรรถนะและคะแนนให้';
+}
+function planOpen(sid, boxId) {
+  const box = byId(boxId); if (!box) return;
+  const wasOpen = box.innerHTML.trim();
+  planClose(); courseAiClose();
+  if (wasOpen) return;
+  const s = findSubject(sid); if (!s) return;
+  PLAN.sid = sid; PLAN.box = boxId; PLAN.draft = null;
+  box.innerHTML = planPanelHtml(s);
+  if (planGet(s)) planShowDraft();
+  else { planState(); if (!builtinPlanFor(s)) planToggleImport(); }
+}
+function planToggleImport() {
+  const el = byId('pln_import'); if (!el) return;
+  el.style.display = el.style.display === 'none' ? '' : 'none';
+  if (el.style.display !== 'none' && !aiCfg().key) { plnStatus('ครั้งแรกต้องตั้งค่า AI (วางคีย์) ก่อนกดให้ AI อ่านแผน'); planSettingsToggle(true); }
+}
+function planSettingsToggle(forceOpen) {
+  const box = byId('pln_settings'); if (!box) return;
+  if (box.style.display === 'none' || forceOpen) { box.innerHTML = courseAiSettingsHtml(); box.style.display = ''; } else { box.style.display = 'none'; box.innerHTML = ''; }
+}
+async function planFile(inp) {
+  const f = inp.files && inp.files[0]; if (!f) return;
+  try {
+    const t = /\.docx$/i.test(f.name) ? await caiReadDocx(f) : await f.text();
+    byId('pln_text').value = t.trim();
+    plnStatus('อ่านไฟล์ "' + f.name + '" แล้ว (' + t.length + ' ตัวอักษร) — กดให้ AI อ่านแผนได้เลย');
+  } catch (e) { plnStatus('อ่านไฟล์ไม่ได้: ' + e.message + ' (ลองคัดลอกข้อความมาวางแทน)', true); }
+}
+async function planRunAi() {
+  const s = findSubject(PLAN.sid), text = byId('pln_text').value.trim(), btn = byId('pln_btn');
+  if (!s) return;
+  if (text.length < 20) { plnStatus('วางข้อความแผนการจัดการเรียนรู้ก่อน', true); return; }
+  btn.disabled = true; plnStatus('AI กำลังอ่านแผน… (ประมาณ 10–40 วินาที)');
+  try {
+    const plan = planNormalize(parseAiJson(await aiText(planAiPrompt(text))));
+    planSave(s, plan); byId('pln_import').style.display = 'none';
+    plnStatus('อ่านแผนได้ ' + plan.units.length + ' หน่วย — ตรวจสมรรถนะและคะแนนด้านล่าง แล้วกดนำไปใช้');
+    planShowDraft(true);
+  } catch (e) {
+    if (e.code === 'nokey') { plnStatus('ยังไม่ได้ตั้งค่าคีย์ AI — วางคีย์ในช่องด้านล่างแล้วกดบันทึก', true); planSettingsToggle(true); }
+    else plnStatus(e.message, true);
+  }
+  btn.disabled = false;
+}
+function planUseBuiltin() {
+  const s = findSubject(PLAN.sid), bp = s && builtinPlanFor(s); if (!bp) return;
+  planSave(s, planFromBuiltin(bp)); plnStatus('ใช้แผนในแอพแล้ว ' + bp.units.length + ' หน่วย'); planShowDraft(true);
+}
+function planUnitsHtml(plan) {
+  return `<details style="margin-top:10px;"><summary style="cursor:pointer;font-weight:700;color:var(--red);">หน่วยการเรียนรู้ที่อ่านได้ (${plan.units.length} หน่วย)</summary>
+    ${plan.units.map(u => `<div class="meta" style="padding:6px 0;border-bottom:1px solid var(--line);line-height:1.7;"><strong style="color:var(--black);">หน่วยที่ ${escapeHtml(String(u.unit))} ${escapeHtml(u.name)}</strong>${u.sessions ? ' · ครั้งที่ ' + u.sessions[0] + '–' + u.sessions[1] : ''}${u.hours ? ' · ' + u.hours + ' ชม.' : ''}${u.topics.length ? '<br>' + u.topics.map(escapeHtml).join(' · ') : ''}</div>`).join('')}</details>`;
+}
+function planShowDraft(scroll) {
+  const s = findSubject(PLAN.sid), plan = s && planGet(s); if (!s || !plan) return;
+  PLAN.draft = planBuildComps(plan, rptSlots(s));
+  byId('pln_units').innerHTML = planUnitsHtml(plan);
+  planState(); planRenderDraft();
+  if (scroll && byId('pln_draft')) byId('pln_draft').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function planKindVal(it) { return it.kind === 'theory' ? 'theory' : (it.focus === 'creative' ? 'creative' : 'practice'); }
+function planRenderDraft() {
+  const s = findSubject(PLAN.sid), el = byId('pln_draft'); if (!el || !PLAN.draft) return;
+  const d = PLAN.draft, locked = caiHasScores(s), grand = d.reduce((a, c) => a + c.items.reduce((x, it) => x + (Number(it.max) || 0), 0), 0);
+  const ok = grand === 70, col = grand > 70 ? '#B3261E' : ok ? '#3B6D11' : '#8a6d00';
+  const kinds = [['theory', 'ทฤษฎี · ปัญญา'], ['practice', 'ปฏิบัติ · ทักษะ'], ['creative', 'ปฏิบัติ · สร้างสรรค์']];
+  el.innerHTML = `<div style="margin-top:12px;font-weight:700;color:var(--red);">สมรรถนะ 5 ข้อที่จัดจากหน่วยการเรียนรู้ <span class="meta" style="font-weight:400;">(ปรับชนิดและคะแนนได้ก่อนนำไปใช้)</span></div>
+    ${d.map((c, ci) => `<div style="border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:8px;background:#fff;">
+      <div><strong>สมรรถนะที่ ${ci + 1}</strong> <span class="badge">${c.items.reduce((a, it) => a + (Number(it.max) || 0), 0)} คะแนน</span><div class="meta" style="line-height:1.6;">${escapeHtml(c.unit)}</div></div>
+      ${c.items.map((it, k) => `<div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap;">
+        <span style="flex:1;min-width:150px;font-size:calc(14px * var(--fs));">${escapeHtml(it.name)}</span>
+        <select style="width:auto;" onchange="planDraftSet(${ci},${k},'kind',this.value)">${kinds.map(([v, l]) => `<option value="${v}" ${planKindVal(it) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <input type="number" min="0" step="1" inputmode="numeric" style="width:72px;" value="${it.max}" onchange="planDraftSet(${ci},${k},'max',this.value)"></div>`).join('')}</div>`).join('')}
+    <div style="margin-top:10px;padding:8px 10px;border:2px solid ${col};border-radius:10px;color:${col};display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <span>รวมคะแนนสมรรถนะ <strong>${grand}</strong> / 70 ${ok ? '✓' : ''}</span>
+      ${ok ? '' : '<button class="btn outline sm" style="margin:0 0 0 auto;" onclick="planDraftScale()">ปรับให้รวม 70 พอดี</button>'}</div>
+    ${locked ? '<div class="meta" style="color:#B3261E;margin-top:8px;line-height:1.6;">วิชานี้มีคะแนนที่บันทึกแล้ว จึงไม่เปลี่ยนโครงสร้างสมรรถนะ (กันคะแนนเดิมคลาดเคลื่อน) — ถ้าต้องการจัดใหม่ ให้ลบคะแนนในแท็บรายงานผลคะแนนก่อน</div>' : ''}
+    <button class="btn gold" style="margin-top:10px;" ${locked ? 'disabled' : ''} onclick="planApply()">นำไปตั้งสมรรถนะและคะแนน</button>
+    <div class="meta" style="margin-top:6px;line-height:1.6;">ระบบจัดหน่วยลง 5 สมรรถนะตามสัดส่วนชั่วโมงสอน แล้วแบ่งคะแนนรวม 70 ตามน้ำหนักของแต่ละหัวข้อ · ชนิด "ทฤษฎี" จะดึงคะแนนจากค่าปัญญาของนักเรียน ส่วน "ปฏิบัติ" ดึงจากทักษะ/สร้างสรรค์</div>`;
+}
+function planDraftSet(ci, k, f, v) {
+  const it = PLAN.draft && PLAN.draft[ci] && PLAN.draft[ci].items[k]; if (!it) return;
+  if (f === 'max') it.max = Math.max(0, Math.round(Number(v) || 0));
+  else { it.kind = v === 'theory' ? 'theory' : 'practice'; it.focus = v === 'creative' ? 'creative' : 'skill'; }
+  planRenderDraft();
+}
+function planDraftScale() { if (PLAN.draft) { PLAN.draft.forEach(c => c.items.forEach(it => { it.max = Math.max(1, Number(it.max) || 1); })); caiScaleTo70(PLAN.draft); planRenderDraft(); } }
+function planApply() {
+  const s = findSubject(PLAN.sid); if (!s || !PLAN.draft) return;
+  if (caiHasScores(s)) { toast('วิชานี้มีคะแนนที่บันทึกแล้ว ไม่เปลี่ยนโครงสร้าง', true); return; }
+  const r = ensureReport(s);
+  r.comps = PLAN.draft.map(c => ({ unit: c.unit, assignment_id: '', items: c.items.map(it => ({ name: it.name, max: Number(it.max) || 0, kind: it.kind === 'theory' ? 'theory' : 'practice', focus: it.focus === 'creative' ? 'creative' : 'skill' })) }));
+  persistReportOf(s);
+  const grand = r.comps.reduce((a, c) => a + c.items.reduce((x, it) => x + it.max, 0), 0);
+  planClose(); openSubjectDetail(s.subject_id, 'report');
+  toast('ตั้งสมรรถนะ 5 ข้อและคะแนนรวม ' + grand + ' จากแผนการเรียนรู้แล้ว' + (grand !== 70 ? ' (ยังไม่ครบ 70)' : ''), grand > 70);
+}
+wrap('renderReportTab', function (s) {
+  const c = byId('rpt_comps'); if (!c || !s) return;
+  c.insertAdjacentHTML('beforebegin', `<div class="card" style="border-left:4px solid var(--gold);">
+    <h2>📅 ตั้งสมรรถนะและคะแนนจากแผนการจัดการเรียนรู้</h2>
+    <p class="meta" style="line-height:1.7;margin:0 0 8px;">นำเข้าแผนการจัดการเรียนรู้ (หรือใช้แผนที่มีในแอพ) แล้วให้ระบบอ่านหน่วยการเรียนรู้ จัดลง 5 สมรรถนะ และตั้งคะแนนรวม 70 ให้อัตโนมัติ แก้ต่อได้ที่ส่วนสมรรถนะด้านล่าง</p>
+    <button class="btn gold sm" style="margin:0;" onclick="planOpen('${s.subject_id}','plan_box_rpt')">📅 นำเข้าแผน / ตั้งจากแผน</button>
+    <div id="plan_box_rpt"></div></div>`);
+});
 
 /* ---------------- ครู: จัดการนักเรียน ---------------- */
 async function refreshFromServer() {
