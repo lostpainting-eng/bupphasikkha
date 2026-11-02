@@ -3661,8 +3661,54 @@ const AI_PROVIDERS = {
 function aiCfg() { const p = LS.get('bps_ai_prov') || 'gemini'; return { prov: AI_PROVIDERS[p] ? p : 'gemini', key: LS.get('bps_ai_key') || '', model: LS.get('bps_ai_model') || '' }; }
 
 // เรียก AI: ใช้ความสามารถในตัว (ถ้าเปิดในมุมมอง Claude) ไม่งั้นใช้คีย์ที่ครูตั้งไว้ในเครื่อง
-async function aiText(prompt) {
-  const sample = await ensureSample();
+/* ---- รูปภาพที่แนบให้ AI อ่าน (แคปจากหลักสูตร/เอกสาร) ---- */
+const CAI_IMGS = { cai: [], pln: [] };
+function caiImgPrepare(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const sc = Math.min(1, 1800 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * sc)); c.height = Math.max(1, Math.round(img.height * sc));
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+      const src = c.toDataURL('image/jpeg', 0.85); URL.revokeObjectURL(url);
+      res({ mime: 'image/jpeg', b64: src.split(',')[1], src });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('เปิดรูป "' + file.name + '" ไม่ได้')); };
+    img.src = url;
+  });
+}
+function caiMsg(p, msg, bad) { if (p === 'pln') plnStatus(msg, bad); else caiStatus(msg, bad); }
+async function caiAddImages(p, files) {
+  const list = Array.from(files || []).filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name || ''));
+  if (!list.length) return;
+  let skipped = 0;
+  for (const f of list) {
+    if (CAI_IMGS[p].length >= 4) { skipped++; continue; }
+    try { CAI_IMGS[p].push(await caiImgPrepare(f)); } catch (e) { caiMsg(p, e.message + ' (ถ้าเป็นไฟล์ HEIC ให้บันทึกเป็น JPG/PNG ก่อน)', true); }
+  }
+  caiRenderThumbs(p);
+  if (skipped) caiMsg(p, 'แนบได้สูงสุด 4 รูป — ข้ามรูปที่เกิน ' + skipped + ' รูป', true);
+  else caiMsg(p, 'แนบรูปแล้ว ' + CAI_IMGS[p].length + ' รูป — กดวิเคราะห์ได้เลย (AI จะอ่านข้อความจากรูปด้วย)');
+  const inp = byId(p + '_img'); if (inp) inp.value = '';
+}
+function caiRenderThumbs(p) {
+  const el = byId(p + '_thumbs'); if (!el) return;
+  el.innerHTML = CAI_IMGS[p].length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">${CAI_IMGS[p].map((im, i) => `<div style="position:relative;"><img src="${im.src}" alt="รูปที่ ${i + 1}" style="width:84px;height:84px;object-fit:cover;border:1px solid var(--line);border-radius:8px;"><button class="btn red sm" style="position:absolute;top:-6px;right:-6px;margin:0;padding:0 8px;border-radius:50%;" onclick="caiDelImage('${p}',${i})">×</button></div>`).join('')}</div>` : '';
+}
+function caiDelImage(p, i) { CAI_IMGS[p].splice(i, 1); caiRenderThumbs(p); }
+function caiPaste(e, p) {
+  const files = Array.from((e.clipboardData && e.clipboardData.files) || []).filter(f => /^image\//.test(f.type));
+  if (files.length) { e.preventDefault(); caiAddImages(p, files); }
+}
+function caiImgBlockHtml(p) {
+  return `<label for="${p}_img" class="btn outline" style="display:block;text-align:center;cursor:pointer;border:1.5px dashed var(--red);color:var(--red);padding:12px;font-weight:600;margin:8px 0 0;">📷 แนบรูปภาพ / ถ่ายภาพจากหลักสูตร (สูงสุด 4 รูป)</label>
+    <input type="file" id="${p}_img" accept="image/*" multiple style="display:none;" onchange="caiAddImages('${p}', this.files)">
+    <div id="${p}_thumbs"></div>`;
+}
+
+async function aiText(prompt, images) {
+  images = images || [];
+  const sample = images.length ? null : await ensureSample();
   if (sample) { const r = await sample(prompt, { modelTier: 'default' }); return r.text; }
   const c = aiCfg();
   if (!c.key) { const e = new Error('ยังไม่ได้ตั้งค่าคีย์ AI'); e.code = 'nokey'; throw e; }
@@ -3672,11 +3718,11 @@ async function aiText(prompt) {
     if (c.prov === 'gemini') {
       res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': c.key },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3, responseMimeType: 'application/json' } }) });
+        body: JSON.stringify({ contents: [{ parts: images.map(im => ({ inline_data: { mime_type: im.mime, data: im.b64 } })).concat([{ text: prompt }]) }], generationConfig: { temperature: 0.3, responseMimeType: 'application/json' } }) });
     } else {
       res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': c.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model, max_tokens: 8000, temperature: 0.3, messages: [{ role: 'user', content: prompt }] }) });
+        body: JSON.stringify({ model, max_tokens: 8000, temperature: 0.3, messages: [{ role: 'user', content: images.map(im => ({ type: 'image', source: { type: 'base64', media_type: im.mime, data: im.b64 } })).concat([{ type: 'text', text: prompt }]) }] }) });
     }
   } catch (e) { const er = new Error('เชื่อมต่อ AI ไม่ได้ ตรวจอินเทอร์เน็ตแล้วลองใหม่'); er.network = true; throw er; }
   let j = null; try { j = await res.json(); } catch (e) {}
@@ -3701,7 +3747,8 @@ function parseAiJson(t) {
   try { return JSON.parse(t.slice(a, b + 1)); } catch (e) { throw new Error('AI ตอบกลับไม่อยู่ในรูปแบบที่ใช้ได้ ลองใหม่อีกครั้ง'); }
 }
 
-function courseAiPrompt(text, level) {
+const CAI_IMG_NOTE = '\nมีรูปภาพแนบมาด้วย (แคปจากหลักสูตร/เอกสาร) ให้อ่านข้อความในรูปทุกรูป (OCR) แล้วรวมกับข้อความด้านล่างเป็นข้อมูลเดียวกัน ถ้าอ่านตรงไหนไม่ชัดให้ข้าม ห้ามเดา\n';
+function courseAiPrompt(text, level, nImg) {
   const slots = rptSlots({ level });
   return `คุณเป็นผู้เชี่ยวชาญด้านหลักสูตรอาชีวศึกษาและงานจิตรกรรมไทย ช่วยวิเคราะห์ "คำอธิบายรายวิชา" ด้านล่าง แล้วสร้างองค์ประกอบรายวิชาให้ครูผู้สอนนำไปใช้
 ตอบเป็น JSON เท่านั้น (ห้ามมีข้อความนอก JSON) เป็นภาษาไทย ตามโครงสร้างนี้:
@@ -3719,9 +3766,10 @@ function courseAiPrompt(text, level) {
 - ทุกหน่วยมี assignment เป็นชิ้นงานปฏิบัติที่ทำได้จริงในห้องเรียน rubric 3–4 ข้อ คะแนนเต็มรวมประมาณ 30
 - score_groups ต้องมี 5 กลุ่มพอดี (5 สมรรถนะ เรียงตามลำดับการสอน) แต่ละกลุ่มรวมหน่วยที่เกี่ยวข้อง จำนวน items สูงสุดของกลุ่มที่ 1–5 คือ ${slots.join(', ')} ตามลำดับ และผลรวม max ของทุก item ทุกกลุ่ม = 70 พอดี
 
+${nImg ? CAI_IMG_NOTE : ''}
 คำอธิบายรายวิชา:
 """
-${text.slice(0, 20000)}
+${text.slice(0, 20000) || '(ไม่มีข้อความ ใช้ข้อมูลจากรูปที่แนบ)'}
 """`;
 }
 
@@ -3785,9 +3833,10 @@ function caiStatus(msg, bad) { const el = byId('cai_status'); if (el) { el.textC
 function courseAiPanelHtml() {
   return `<div style="margin:8px 0 12px;padding:12px;border:1.5px solid var(--gold,#D4A82A);border-radius:12px;background:#FAF4E4;">
     <div style="font-weight:700;color:var(--red);">✨ นำเข้าคำอธิบายรายวิชา — ให้ AI วิเคราะห์</div>
-    <div class="meta" style="line-height:1.7;margin:4px 0 8px;">วางคำอธิบายรายวิชา/หลักสูตร (หรือเลือกไฟล์ .docx / .txt) AI จะแยกหน่วยการเรียนรู้ จุดประสงค์ ชิ้นงานพร้อมเกณฑ์ และโครงสร้างคะแนน 5 สมรรถนะ ให้ครูตรวจก่อนนำไปใช้</div>
+    <div class="meta" style="line-height:1.7;margin:4px 0 8px;">วางคำอธิบายรายวิชา/หลักสูตร เลือกไฟล์ .docx / .txt หรือแนบรูปแคปจากหลักสูตร AI จะแยกหน่วยการเรียนรู้ จุดประสงค์ ชิ้นงานพร้อมเกณฑ์ และโครงสร้างคะแนน 5 สมรรถนะ ให้ครูตรวจก่อนนำไปใช้</div>
     <input type="file" id="cai_file" accept=".docx,.txt,.md,text/plain" onchange="courseAiFile(this)">
-    <textarea id="cai_text" rows="8" placeholder="วางคำอธิบายรายวิชาที่นี่ เช่น รหัสวิชา ชื่อวิชา ท-ป-น จุดประสงค์รายวิชา สมรรถนะรายวิชา คำอธิบายรายวิชา"></textarea>
+    <textarea id="cai_text" rows="8" onpaste="caiPaste(event,'cai')" placeholder="วางคำอธิบายรายวิชาที่นี่ เช่น รหัสวิชา ชื่อวิชา ท-ป-น จุดประสงค์รายวิชา สมรรถนะรายวิชา คำอธิบายรายวิชา (หรือแนบรูปแคปหลักสูตรด้านล่าง / วางรูปลงช่องนี้ได้)"></textarea>
+    ${caiImgBlockHtml('cai')}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
       <button class="btn gold sm" id="cai_btn" style="margin:0;" onclick="courseAiRun()">✨ วิเคราะห์ด้วย AI</button>
       <button class="btn outline sm" style="margin:0;" onclick="courseAiSettingsToggle()">⚙ ตั้งค่า AI${aiCfg().key ? ' ✓' : ''}</button>
@@ -3823,13 +3872,13 @@ function courseAiOpen(mode, sid) {
   const box = byId('cai_box'); if (!box) return;
   if (box.innerHTML.trim()) { courseAiClose(); return; }
   planClose();
-  COURSE_AI.mode = mode; COURSE_AI.sid = sid || ''; COURSE_AI.plan = null;
+  COURSE_AI.mode = mode; COURSE_AI.sid = sid || ''; COURSE_AI.plan = null; CAI_IMGS.cai = [];
   box.innerHTML = courseAiPanelHtml();
   const s = sid ? findSubject(sid) : null;
   byId('cai_text').value = s ? (s.description || '') : (byId('new_desc') ? byId('new_desc').value : '');
   if (!aiCfg().key) { caiStatus('ครั้งแรกต้องตั้งค่า AI (วางคีย์) ก่อนกดวิเคราะห์'); courseAiSettingsToggle(true); }
 }
-function courseAiClose() { const box = byId('cai_box'); if (box) box.innerHTML = ''; COURSE_AI.plan = null; COURSE_AI.mode = ''; }
+function courseAiClose() { const box = byId('cai_box'); if (box) box.innerHTML = ''; COURSE_AI.plan = null; COURSE_AI.mode = ''; CAI_IMGS.cai = []; }
 function courseAiInjectNew() {
   const first = byId('new_code'); if (!first || !first.previousElementSibling) return;
   first.previousElementSibling.insertAdjacentHTML('beforebegin', `<button class="btn outline" style="margin:0 0 8px;width:100%;" onclick="courseAiOpen('new')">✨ นำเข้าคำอธิบายรายวิชา — ให้ AI สร้างหน่วยการเรียนรู้ / ชิ้นงาน / โครงสร้างคะแนน</button><div id="cai_box"></div>`);
@@ -3864,12 +3913,13 @@ function caiHasScores(s) {
 }
 async function courseAiRun() {
   const text = byId('cai_text').value.trim(), btn = byId('cai_btn');
-  if (text.length < 20) { caiStatus('วางคำอธิบายรายวิชาก่อน (อย่างน้อย 1–2 บรรทัด)', true); return; }
+  const imgs = CAI_IMGS.cai.slice();
+  if (text.length < 20 && !imgs.length) { caiStatus('วางคำอธิบายรายวิชา หรือแนบรูปภาพก่อน', true); return; }
   const s = COURSE_AI.sid ? findSubject(COURSE_AI.sid) : null;
   const level = s ? s.level : (byId('new_level') ? byId('new_level').value : 'ปวช.');
-  btn.disabled = true; byId('cai_result').innerHTML = ''; caiStatus('AI กำลังวิเคราะห์… (ประมาณ 10–40 วินาที)');
+  btn.disabled = true; byId('cai_result').innerHTML = ''; caiStatus(imgs.length ? 'AI กำลังอ่านรูปและวิเคราะห์… (ประมาณ 20–60 วินาที)' : 'AI กำลังวิเคราะห์… (ประมาณ 10–40 วินาที)');
   try {
-    const plan = courseAiNormalize(parseAiJson(await aiText(courseAiPrompt(text, level))), level);
+    const plan = courseAiNormalize(parseAiJson(await aiText(courseAiPrompt(text, level, imgs.length), imgs)), level);
     COURSE_AI.plan = plan;
     if (COURSE_AI.mode === 'new') courseAiFillForm(plan);
     byId('cai_result').innerHTML = courseAiResultHtml(plan, s);
@@ -3981,7 +4031,7 @@ function planFromBuiltin(p) {
   return { source: 'builtin', semester: p.semester || '', hours_per_week: p.hours_per_week || null, total_sessions: p.total_sessions || null,
     units: p.units.map(u => ({ unit: u.unit, name: u.name, sessions: u.sessions ? u.sessions.slice(0, 2) : null, hours: null, topics: u.topics.slice() })) };
 }
-function planAiPrompt(text) {
+function planAiPrompt(text, nImg) {
   return `ช่วยอ่าน "แผนการจัดการเรียนรู้" ของรายวิชาด้านล่าง แล้วดึงโครงสร้างหน่วยการเรียนรู้ออกมา ตอบเป็น JSON เท่านั้น (ห้ามมีข้อความนอก JSON) เป็นภาษาไทย ตามโครงสร้างนี้:
 {
  "semester": "เช่น 2/2569 หรือ null",
@@ -3995,9 +4045,10 @@ function planAiPrompt(text) {
 - ถ้าแผนระบุจำนวนชั่วโมงของหน่วย ให้ใส่ hours ถ้าไม่ระบุให้ null
 - topics ตัดเลขหัวข้อนำหน้าออกได้ ไม่เกิน 10 หัวข้อต่อหน่วย
 
+${nImg ? CAI_IMG_NOTE : ''}
 แผนการจัดการเรียนรู้:
 """
-${text.slice(0, 20000)}
+${text.slice(0, 20000) || '(ไม่มีข้อความ ใช้ข้อมูลจากรูปที่แนบ)'}
 """`;
 }
 function planNormalize(raw) {
@@ -4057,7 +4108,7 @@ function planBuildComps(plan, slots) {
 
 /* ---- ส่วนติดต่อผู้ใช้ ---- */
 function plnStatus(msg, bad) { const el = byId('pln_status'); if (el) { el.textContent = msg || ''; el.style.color = bad ? '#B3261E' : ''; } }
-function planClose() { ['plan_box', 'plan_box_rpt'].forEach(id => { const b = byId(id); if (b) b.innerHTML = ''; }); PLAN.draft = null; }
+function planClose() { ['plan_box', 'plan_box_rpt'].forEach(id => { const b = byId(id); if (b) b.innerHTML = ''; }); PLAN.draft = null; CAI_IMGS.pln = []; }
 function planPanelHtml(s) {
   const bp = builtinPlanFor(s);
   return `<div style="margin:8px 0 12px;padding:12px;border:1.5px solid var(--gold,#D4A82A);border-radius:12px;background:#FAF4E4;">
@@ -4068,9 +4119,10 @@ function planPanelHtml(s) {
       <button class="btn outline sm" style="margin:0;" onclick="planToggleImport()">⬆ นำเข้าแผนใหม่ (ไฟล์ / วางข้อความ)</button>
       <button class="btn outline sm" style="margin:0;" onclick="planClose()">ปิด</button></div>
     <div id="pln_import" style="display:none;margin-top:8px;">
-      <div class="meta" style="line-height:1.7;margin-bottom:6px;">เลือกไฟล์แผน (.docx / .txt) หรือวางข้อความแผนการจัดการเรียนรู้ ให้ AI อ่านแล้วแยกเป็นหน่วยการเรียนรู้</div>
+      <div class="meta" style="line-height:1.7;margin-bottom:6px;">เลือกไฟล์แผน (.docx / .txt) วางข้อความ หรือแนบรูปแคปแผนการจัดการเรียนรู้ ให้ AI อ่านแล้วแยกเป็นหน่วยการเรียนรู้</div>
       <input type="file" accept=".docx,.txt,.md,text/plain" onchange="planFile(this)">
-      <textarea id="pln_text" rows="8" placeholder="วางแผนการจัดการเรียนรู้ที่นี่ (หน่วยที่ 1 … หัวข้อ … จำนวนชั่วโมง/ครั้งที่สอน)"></textarea>
+      <textarea id="pln_text" rows="8" onpaste="caiPaste(event,'pln')" placeholder="วางแผนการจัดการเรียนรู้ที่นี่ (หน่วยที่ 1 … หัวข้อ … จำนวนชั่วโมง/ครั้งที่สอน) หรือแนบรูปแคปแผนด้านล่าง / วางรูปลงช่องนี้ได้"></textarea>
+      ${caiImgBlockHtml('pln')}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
         <button class="btn gold sm" id="pln_btn" style="margin:0;" onclick="planRunAi()">✨ ให้ AI อ่านแผน</button>
         <button class="btn outline sm" style="margin:0;" onclick="planSettingsToggle()">⚙ ตั้งค่า AI${aiCfg().key ? ' ✓' : ''}</button></div></div>
@@ -4114,10 +4166,11 @@ async function planFile(inp) {
 async function planRunAi() {
   const s = findSubject(PLAN.sid), text = byId('pln_text').value.trim(), btn = byId('pln_btn');
   if (!s) return;
-  if (text.length < 20) { plnStatus('วางข้อความแผนการจัดการเรียนรู้ก่อน', true); return; }
-  btn.disabled = true; plnStatus('AI กำลังอ่านแผน… (ประมาณ 10–40 วินาที)');
+  const imgs = CAI_IMGS.pln.slice();
+  if (text.length < 20 && !imgs.length) { plnStatus('วางข้อความแผนการจัดการเรียนรู้ หรือแนบรูปภาพก่อน', true); return; }
+  btn.disabled = true; plnStatus(imgs.length ? 'AI กำลังอ่านรูปและแผน… (ประมาณ 20–60 วินาที)' : 'AI กำลังอ่านแผน… (ประมาณ 10–40 วินาที)');
   try {
-    const plan = planNormalize(parseAiJson(await aiText(planAiPrompt(text))));
+    const plan = planNormalize(parseAiJson(await aiText(planAiPrompt(text, imgs.length), imgs)));
     planSave(s, plan); byId('pln_import').style.display = 'none';
     plnStatus('อ่านแผนได้ ' + plan.units.length + ' หน่วย — ตรวจสมรรถนะและคะแนนด้านล่าง แล้วกดนำไปใช้');
     planShowDraft(true);
