@@ -3566,12 +3566,21 @@ async function addSubjectDemo() {
   const hpwEl = byId('new_hpw'), hours_per_week = hpwEl ? (Number(hpwEl.value) || 0) : 0;
   const subject = { subject_code: byId('new_code').value.trim(), subject_name: name, level: byId('new_level').value, credit_hours: byId('new_credit').value, description: byId('new_desc').value.trim(), room: byId('new_room') ? byId('new_room').value : '', days_of_week, hours_per_week };
   err.textContent = 'กำลังบันทึก…';
-  try { const r = await api('saveSubject', { subject }); DEMO.subjects.push(mapSubject(Object.assign({ subject_id: r.subject_id, active: true }, subject), {})); renderSubjectList(); }
+  try {
+    const r = await api('saveSubject', { subject }), ns = mapSubject(Object.assign({ subject_id: r.subject_id, active: true }, subject), {});
+    DEMO.subjects.push(ns);
+    let extra = '';
+    if (COURSE_AI.mode === 'new' && COURSE_AI.plan) { try { extra = await courseAiApply(ns, { info: false }); } catch (e2) { extra = 'นำผล AI ไปใช้ไม่สำเร็จ: ' + e2.message; } }
+    COURSE_AI.plan = null; COURSE_AI.mode = '';
+    renderSubjectList();
+    if (extra) toast('เพิ่มรายวิชาแล้ว · ' + extra);
+  }
   catch (e) { err.textContent = e.network ? 'ออฟไลน์ — เพิ่มรายวิชาต้องออนไลน์' : e.message; }
 }
 wrap('renderSubjectList', function () {
   const rooms = distinctRooms(), anchor = byId('add_err'); if (!anchor) return;
   anchor.insertAdjacentHTML('beforebegin', `<label>🔒 ล็อกกลุ่มผู้เรียนกับวิชานี้</label><select id="new_room"><option value="">ไม่ล็อก (ทุกกลุ่ม)</option>${rooms.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('')}</select>`);
+  courseAiInjectNew();
 });
 wrap('openSubjectDetail', function (id) {
   const s = findSubject(id), card = byId('teacher-body').querySelector('.card'); if (!s || !card) return;
@@ -3591,6 +3600,7 @@ wrap('openSubjectDetail', function (id) {
       <button class="btn outline sm" onclick="pwaSaveSubjectSchedule('${id}')">บันทึกตาราง</button>
       <span id="sched_ok_${id}" style="color:var(--green,#4a7c3f);font-size:calc(13px * var(--fs));"></span>
     </div>
+    <button class="btn outline sm" style="margin-top:8px;" onclick="courseAiOpen('existing','${id}')">✨ นำเข้าคำอธิบายรายวิชา (AI สร้างหน่วยการเรียนรู้/ชิ้นงาน/คะแนน)</button><div id="cai_box"></div>
     <button class="btn outline sm" id="arch_btn" style="margin-top:8px;" onclick="pwaArchiveSubject('${id}')">ซ่อนรายวิชานี้</button></div>`);
 });
 function pwaSaveSubjectSchedule(id) {
@@ -3617,6 +3627,309 @@ async function pwaArchiveSubject(id) {
   catch (e) { toast(e.network ? 'ออฟไลน์ — ซ่อนรายวิชาต้องออนไลน์' : e.message, true); }
 }
 function levelHint() { return ''; }
+
+/* ---------------- นำเข้าคำอธิบายรายวิชา + AI วิเคราะห์องค์ประกอบรายวิชา ---------------- */
+const COURSE_AI = { mode: '', sid: '', plan: null };
+const AI_PROVIDERS = {
+  gemini: { name: 'Google Gemini (มีโควตาฟรี)', model: 'gemini-flash-latest' },
+  claude: { name: 'Claude (Anthropic)', model: 'claude-sonnet-4-6' },
+};
+function aiCfg() { const p = LS.get('bps_ai_prov') || 'gemini'; return { prov: AI_PROVIDERS[p] ? p : 'gemini', key: LS.get('bps_ai_key') || '', model: LS.get('bps_ai_model') || '' }; }
+
+// เรียก AI: ใช้ความสามารถในตัว (ถ้าเปิดในมุมมอง Claude) ไม่งั้นใช้คีย์ที่ครูตั้งไว้ในเครื่อง
+async function aiText(prompt) {
+  const sample = await ensureSample();
+  if (sample) { const r = await sample(prompt, { modelTier: 'default' }); return r.text; }
+  const c = aiCfg();
+  if (!c.key) { const e = new Error('ยังไม่ได้ตั้งค่าคีย์ AI'); e.code = 'nokey'; throw e; }
+  const model = c.model || AI_PROVIDERS[c.prov].model;
+  let res;
+  try {
+    if (c.prov === 'gemini') {
+      res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': c.key },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3, responseMimeType: 'application/json' } }) });
+    } else {
+      res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': c.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({ model, max_tokens: 8000, temperature: 0.3, messages: [{ role: 'user', content: prompt }] }) });
+    }
+  } catch (e) { const er = new Error('เชื่อมต่อ AI ไม่ได้ ตรวจอินเทอร์เน็ตแล้วลองใหม่'); er.network = true; throw er; }
+  let j = null; try { j = await res.json(); } catch (e) {}
+  if (!res.ok) {
+    const raw = j && j.error ? (j.error.message || (typeof j.error === 'string' ? j.error : '')) : '';
+    let m = raw || ('HTTP ' + res.status);
+    if (res.status === 401 || res.status === 403 || /api key/i.test(raw)) m = 'คีย์ AI ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน — ตรวจคีย์ในปุ่ม "ตั้งค่า AI"';
+    else if (res.status === 404) m = 'ไม่พบโมเดล "' + model + '" — แก้ชื่อโมเดลในปุ่ม "ตั้งค่า AI" (หรือเว้นว่างให้ใช้ค่าเริ่มต้น)';
+    else if (res.status === 429) m = 'ใช้งานถี่หรือเกินโควตา รอสักครู่แล้วลองใหม่';
+    throw new Error(m);
+  }
+  const text = c.prov === 'gemini'
+    ? ((j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || []).map(p => p.text || '').join('')
+    : ((j.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
+  if (!text.trim()) throw new Error('AI ไม่ได้ตอบกลับ ลองใหม่อีกครั้ง');
+  return text;
+}
+function parseAiJson(t) {
+  t = String(t || '');
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a < 0 || b < a) throw new Error('AI ตอบกลับไม่อยู่ในรูปแบบที่ใช้ได้ ลองใหม่อีกครั้ง');
+  try { return JSON.parse(t.slice(a, b + 1)); } catch (e) { throw new Error('AI ตอบกลับไม่อยู่ในรูปแบบที่ใช้ได้ ลองใหม่อีกครั้ง'); }
+}
+
+function courseAiPrompt(text, level) {
+  const slots = rptSlots({ level });
+  return `คุณเป็นผู้เชี่ยวชาญด้านหลักสูตรอาชีวศึกษาและงานจิตรกรรมไทย ช่วยวิเคราะห์ "คำอธิบายรายวิชา" ด้านล่าง แล้วสร้างองค์ประกอบรายวิชาให้ครูผู้สอนนำไปใช้
+ตอบเป็น JSON เท่านั้น (ห้ามมีข้อความนอก JSON) เป็นภาษาไทย ตามโครงสร้างนี้:
+{
+ "subject": { "code": "รหัสวิชา หรือ null", "name": "ชื่อวิชา", "level": "ปวช. | มัธยม | ระยะสั้น", "credit": 0 หรือ null, "theory_hours": 0 หรือ null, "practice_hours": 0 หรือ null, "hours_per_week": 0 หรือ null },
+ "description": "คำอธิบายรายวิชาเรียบเรียงให้กระชับ ไม่เกิน 6 บรรทัด",
+ "objectives": ["จุดประสงค์รายวิชา/สมรรถนะรายวิชา แต่ละข้อ"],
+ "units": [ { "title": "ชื่อหน่วยการเรียนรู้", "hours": 0 หรือ null, "topics": ["หัวข้อเนื้อหาย่อย"], "assignment": { "title": "ชื่อชิ้นงานปฏิบัติ", "description": "โจทย์/สิ่งที่ต้องส่ง", "rubric": [ { "name": "เกณฑ์ให้คะแนน", "max": 10 } ] } } ],
+ "score_groups": [ { "unit": "ชื่อสมรรถนะ/หน่วยที่ใช้วัดผล", "items": [ { "name": "รายการวัดผล", "max": 5 } ] } ]
+}
+กติกา:
+- ยึดเนื้อหาจากข้อความที่ให้เป็นหลัก ห้ามแต่งรหัสวิชา หน่วยกิต หรือชั่วโมงที่ไม่มีในข้อความ (ไม่มีให้ใส่ null) hours_per_week คือชั่วโมงเรียนต่อสัปดาห์ (ทฤษฎี+ปฏิบัติ) ถ้าไม่ระบุให้ null
+- level ใช้ได้เฉพาะ "ปวช." "มัธยม" "ระยะสั้น" (ปวส. ให้ใช้ "ปวช.") ถ้าข้อความไม่ระบุให้ใช้ "${level}"
+- units 4–8 หน่วย เรียงตามลำดับการสอน ชื่อหน่วยสั้นกระชับ ผลรวม hours ใกล้เคียงชั่วโมงรวมของวิชา (ถ้ามีข้อมูล)
+- ทุกหน่วยมี assignment เป็นชิ้นงานปฏิบัติที่ทำได้จริงในห้องเรียน rubric 3–4 ข้อ คะแนนเต็มรวมประมาณ 30
+- score_groups ต้องมี 5 กลุ่มพอดี (5 สมรรถนะ เรียงตามลำดับการสอน) แต่ละกลุ่มรวมหน่วยที่เกี่ยวข้อง จำนวน items สูงสุดของกลุ่มที่ 1–5 คือ ${slots.join(', ')} ตามลำดับ และผลรวม max ของทุก item ทุกกลุ่ม = 70 พอดี
+
+คำอธิบายรายวิชา:
+"""
+${text.slice(0, 20000)}
+"""`;
+}
+
+/* ---- ปรับผลจาก AI ให้ตรงกับโครงสร้างที่แอปใช้ ---- */
+function caiStr(v, n) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n || 200); }
+function caiNum(v) { const n = Number(String(v == null ? '' : v).replace(/[^\d.]/g, '')); return isFinite(n) && n > 0 ? n : null; }
+function caiList(v, n, len) { return (Array.isArray(v) ? v : []).map(x => caiStr(x, len || 200)).filter(Boolean).slice(0, n || 12); }
+function caiScaleTo70(groups) {
+  const all = []; groups.forEach(g => g.items.forEach(it => all.push(it)));
+  if (!all.length) return;
+  const T = 70, sum = all.reduce((a, it) => a + it.max, 0) || 1;
+  const raw = all.map(it => it.max * T / sum), val = raw.map(v => Math.max(1, Math.floor(v)));
+  let diff = T - val.reduce((a, b) => a + b, 0);
+  const order = raw.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]);
+  for (let k = 0; diff > 0; k++, diff--) val[order[k % order.length][1]]++;
+  while (diff < 0) { let mi = -1; val.forEach((v, i) => { if (v > 1 && (mi < 0 || v > val[mi])) mi = i; }); if (mi < 0) break; val[mi]--; diff++; }
+  all.forEach((it, i) => { it.max = val[i]; });
+}
+function caiGroupsFromUnits(units) {
+  const n = units.length, out = [];
+  for (let g = 0; g < 5; g++) {
+    const part = n >= 5 ? units.slice(Math.floor(g * n / 5), Math.floor((g + 1) * n / 5)) : (units[g] ? [units[g]] : []);
+    if (!part.length) out.push({ unit: 'การประเมินผลรวมและการนำเสนอผลงาน', items: [{ name: 'การนำเสนอผลงาน', max: 5 }] });
+    else out.push({ unit: part.length === 1 ? part[0].title : part.map(u => u.title).join(' / ').slice(0, 120), items: part.map(u => ({ name: u.title.slice(0, 60), max: 1 })) });
+  }
+  return out;
+}
+function courseAiNormalize(raw, level) {
+  raw = raw || {};
+  const sj = raw.subject || {};
+  const lv = ['ปวช.', 'มัธยม', 'ระยะสั้น'].includes(caiStr(sj.level)) ? caiStr(sj.level) : '';
+  const theory = caiNum(sj.theory_hours), prac = caiNum(sj.practice_hours);
+  let hpw = caiNum(sj.hours_per_week); if (!hpw && (theory || prac)) hpw = (theory || 0) + (prac || 0);
+  const units = (Array.isArray(raw.units) ? raw.units : []).slice(0, 10).map((u, i) => {
+    const a = u && u.assignment;
+    const rubric = a && Array.isArray(a.rubric) ? a.rubric.map(r => ({ name: caiStr(r && r.name, 80) || 'เกณฑ์', max: Math.max(1, Math.round(caiNum(r && r.max) || 5)) })).slice(0, 6) : [];
+    return { title: caiStr(u && u.title, 120) || ('หน่วยที่ ' + (i + 1)), hours: caiNum(u && u.hours), topics: caiList(u && u.topics, 10),
+      assignment: a && caiStr(a.title, 120) ? { title: caiStr(a.title, 120), description: caiStr(a.description, 600),
+        rubric: rubric.length ? rubric : [{ name: 'ความถูกต้องตามแบบแผน', max: 15 }, { name: 'ความประณีต', max: 10 }, { name: 'ความสมบูรณ์ของผลงาน', max: 5 }] } : null };
+  });
+  const slots = rptSlots({ level: lv || level });
+  let groups = (Array.isArray(raw.score_groups) ? raw.score_groups : []).map(g => ({ unit: caiStr(g && g.unit, 120),
+    items: (Array.isArray(g && g.items) ? g.items : []).map(it => ({ name: caiStr(it && it.name, 80), max: Math.max(1, Math.round(caiNum(it && it.max) || 1)) })).filter(it => it.name) }));
+  if (groups.length !== 5 || groups.some(g => !g.unit || !g.items.length)) groups = caiGroupsFromUnits(units);
+  groups = groups.map((g, i) => ({ unit: g.unit, items: g.items.slice(0, slots[i]) }));
+  caiScaleTo70(groups);
+  if (!units.length && !raw.description) throw new Error('AI วิเคราะห์ไม่พบเนื้อหารายวิชา ลองวางคำอธิบายให้ละเอียดขึ้น');
+  return { subject: { code: caiStr(sj.code, 40), name: caiStr(sj.name, 150), level: lv, credit: caiNum(sj.credit), hours_per_week: hpw, theory, prac },
+    description: caiStr(raw.description, 1500), objectives: caiList(raw.objectives, 12, 300), units, groups };
+}
+function courseAiDescription(plan) {
+  const parts = [];
+  if (plan.description) parts.push(plan.description);
+  if (plan.objectives.length) parts.push('จุดประสงค์รายวิชา\n' + plan.objectives.map((o, i) => (i + 1) + '. ' + o).join('\n'));
+  if (plan.units.length) parts.push('หน่วยการเรียนรู้\n' + plan.units.map((u, i) => (i + 1) + '. ' + u.title + (u.hours ? ' (' + u.hours + ' ชม.)' : '')).join('\n'));
+  return parts.join('\n\n');
+}
+
+/* ---- ส่วนติดต่อผู้ใช้ ---- */
+function caiStatus(msg, bad) { const el = byId('cai_status'); if (el) { el.textContent = msg || ''; el.style.color = bad ? '#B3261E' : ''; } }
+function courseAiPanelHtml() {
+  return `<div style="margin:8px 0 12px;padding:12px;border:1.5px solid var(--gold,#D4A82A);border-radius:12px;background:#FAF4E4;">
+    <div style="font-weight:700;color:var(--red);">✨ นำเข้าคำอธิบายรายวิชา — ให้ AI วิเคราะห์</div>
+    <div class="meta" style="line-height:1.7;margin:4px 0 8px;">วางคำอธิบายรายวิชา/หลักสูตร (หรือเลือกไฟล์ .docx / .txt) AI จะแยกหน่วยการเรียนรู้ จุดประสงค์ ชิ้นงานพร้อมเกณฑ์ และโครงสร้างคะแนน 5 สมรรถนะ ให้ครูตรวจก่อนนำไปใช้</div>
+    <input type="file" id="cai_file" accept=".docx,.txt,.md,text/plain" onchange="courseAiFile(this)">
+    <textarea id="cai_text" rows="8" placeholder="วางคำอธิบายรายวิชาที่นี่ เช่น รหัสวิชา ชื่อวิชา ท-ป-น จุดประสงค์รายวิชา สมรรถนะรายวิชา คำอธิบายรายวิชา"></textarea>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+      <button class="btn gold sm" id="cai_btn" style="margin:0;" onclick="courseAiRun()">✨ วิเคราะห์ด้วย AI</button>
+      <button class="btn outline sm" style="margin:0;" onclick="courseAiSettingsToggle()">⚙ ตั้งค่า AI${aiCfg().key ? ' ✓' : ''}</button>
+      <button class="btn outline sm" style="margin:0;" onclick="courseAiClose()">ปิด</button></div>
+    <div id="cai_status" class="meta" style="margin-top:6px;line-height:1.6;"></div>
+    <div id="cai_settings" style="display:none;"></div>
+    <div id="cai_result"></div></div>`;
+}
+function courseAiSettingsHtml() {
+  const c = aiCfg();
+  return `<div style="margin-top:8px;padding:10px;border:1px dashed var(--line);border-radius:10px;background:#fff;">
+    <label style="margin-top:0;">ผู้ให้บริการ AI</label>
+    <select id="cai_prov" onchange="courseAiProvChange()">${Object.keys(AI_PROVIDERS).map(k => `<option value="${k}" ${c.prov === k ? 'selected' : ''}>${AI_PROVIDERS[k].name}</option>`).join('')}</select>
+    <label>API Key</label><input id="cai_key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="วางคีย์ที่นี่" value="${escapeHtml(c.key)}">
+    <label>ชื่อโมเดล (เว้นว่าง = ค่าเริ่มต้น)</label><input id="cai_model" autocapitalize="off" spellcheck="false" placeholder="${escapeHtml(AI_PROVIDERS[c.prov].model)}" value="${escapeHtml(c.model)}">
+    <div class="meta" style="line-height:1.7;margin-top:6px;">ขอคีย์ Gemini ฟรีที่ aistudio.google.com/apikey · คีย์ Claude ที่ console.anthropic.com · คีย์ถูกเก็บในเครื่องนี้เท่านั้น ไม่ส่งไปที่ระบบของวิทยาลัย ใช้เฉพาะตอนกดวิเคราะห์ (ข้อความคำอธิบายรายวิชาจะถูกส่งไปที่ผู้ให้บริการที่เลือก)</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+      <button class="btn gold sm" style="margin:0;" onclick="courseAiSaveSettings()">บันทึกการตั้งค่า</button>
+      <button class="btn outline sm" style="margin:0;" onclick="courseAiClearKey()">ลบคีย์</button>
+      <span id="cai_set_ok" class="meta"></span></div></div>`;
+}
+function courseAiSettingsToggle(forceOpen) {
+  const box = byId('cai_settings'); if (!box) return;
+  if (box.style.display === 'none' || forceOpen) { box.innerHTML = courseAiSettingsHtml(); box.style.display = ''; } else { box.style.display = 'none'; box.innerHTML = ''; }
+}
+function courseAiProvChange() { const p = byId('cai_prov').value; byId('cai_model').placeholder = AI_PROVIDERS[p].model; }
+function courseAiSaveSettings() {
+  LS.set('bps_ai_prov', byId('cai_prov').value); LS.set('bps_ai_key', byId('cai_key').value.trim()); LS.set('bps_ai_model', byId('cai_model').value.trim());
+  const ok = byId('cai_set_ok'); if (ok) { ok.textContent = '✓ บันทึกแล้ว'; setTimeout(() => { if (byId('cai_settings')) { byId('cai_settings').style.display = 'none'; byId('cai_settings').innerHTML = ''; } }, 900); }
+}
+function courseAiClearKey() { LS.del('bps_ai_key'); const k = byId('cai_key'); if (k) k.value = ''; const ok = byId('cai_set_ok'); if (ok) ok.textContent = 'ลบคีย์แล้ว'; }
+function courseAiOpen(mode, sid) {
+  const box = byId('cai_box'); if (!box) return;
+  if (box.innerHTML.trim()) { courseAiClose(); return; }
+  COURSE_AI.mode = mode; COURSE_AI.sid = sid || ''; COURSE_AI.plan = null;
+  box.innerHTML = courseAiPanelHtml();
+  const s = sid ? findSubject(sid) : null;
+  byId('cai_text').value = s ? (s.description || '') : (byId('new_desc') ? byId('new_desc').value : '');
+  if (!aiCfg().key) { caiStatus('ครั้งแรกต้องตั้งค่า AI (วางคีย์) ก่อนกดวิเคราะห์'); courseAiSettingsToggle(true); }
+}
+function courseAiClose() { const box = byId('cai_box'); if (box) box.innerHTML = ''; COURSE_AI.plan = null; COURSE_AI.mode = ''; }
+function courseAiInjectNew() {
+  const first = byId('new_code'); if (!first || !first.previousElementSibling) return;
+  first.previousElementSibling.insertAdjacentHTML('beforebegin', `<button class="btn outline" style="margin:0 0 8px;width:100%;" onclick="courseAiOpen('new')">✨ นำเข้าคำอธิบายรายวิชา — ให้ AI สร้างหน่วยการเรียนรู้ / ชิ้นงาน / โครงสร้างคะแนน</button><div id="cai_box"></div>`);
+}
+async function courseAiFile(inp) {
+  const f = inp.files && inp.files[0]; if (!f) return;
+  try {
+    let t;
+    if (/\.docx$/i.test(f.name)) t = await caiReadDocx(f); else t = await f.text();
+    byId('cai_text').value = t.trim();
+    caiStatus('อ่านไฟล์ "' + f.name + '" แล้ว (' + t.length + ' ตัวอักษร) — กดวิเคราะห์ได้เลย');
+  } catch (e) { caiStatus('อ่านไฟล์ไม่ได้: ' + e.message + ' (ลองคัดลอกข้อความมาวางแทน)', true); }
+}
+function caiLoadZip() {
+  return new Promise((res, rej) => {
+    if (window.JSZip) return res();
+    const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload = res; s.onerror = () => rej(new Error('โหลดตัวอ่านไฟล์ไม่ได้ (ต้องออนไลน์)')); document.head.appendChild(s);
+  });
+}
+async function caiReadDocx(f) {
+  await caiLoadZip();
+  const zip = await JSZip.loadAsync(await f.arrayBuffer()), x = zip.file('word/document.xml');
+  if (!x) throw new Error('ไม่ใช่ไฟล์ .docx');
+  const xml = await x.async('string');
+  return xml.replace(/<w:tab\/>/g, '\t').replace(/<w:br\/>/g, '\n').replace(/<\/w:p>/g, '\n').replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+}
+function caiHasScores(s) {
+  const r = s && s.report; if (!r || !r.scores) return false;
+  return Object.keys(r.scores).some(k => ((r.scores[k] || {}).c || []).some(a => (a || []).some(v => v !== '' && v != null)));
+}
+async function courseAiRun() {
+  const text = byId('cai_text').value.trim(), btn = byId('cai_btn');
+  if (text.length < 20) { caiStatus('วางคำอธิบายรายวิชาก่อน (อย่างน้อย 1–2 บรรทัด)', true); return; }
+  const s = COURSE_AI.sid ? findSubject(COURSE_AI.sid) : null;
+  const level = s ? s.level : (byId('new_level') ? byId('new_level').value : 'ปวช.');
+  btn.disabled = true; byId('cai_result').innerHTML = ''; caiStatus('AI กำลังวิเคราะห์… (ประมาณ 10–40 วินาที)');
+  try {
+    const plan = courseAiNormalize(parseAiJson(await aiText(courseAiPrompt(text, level))), level);
+    COURSE_AI.plan = plan;
+    if (COURSE_AI.mode === 'new') courseAiFillForm(plan);
+    byId('cai_result').innerHTML = courseAiResultHtml(plan, s);
+    caiStatus(COURSE_AI.mode === 'new' ? 'วิเคราะห์เสร็จแล้ว — เติมข้อมูลลงฟอร์มด้านล่างให้แล้ว ตรวจแล้วกด "เพิ่มรายวิชา" ท้ายฟอร์ม' : 'วิเคราะห์เสร็จแล้ว — ตรวจรายการด้านล่างแล้วกดนำไปใช้');
+  } catch (e) {
+    if (e.code === 'nokey') { caiStatus('ยังไม่ได้ตั้งค่าคีย์ AI — วางคีย์ในช่องด้านล่างแล้วกดบันทึก', true); courseAiSettingsToggle(true); }
+    else caiStatus(e.message, true);
+  }
+  btn.disabled = false;
+}
+function courseAiFillForm(plan) {
+  const sj = plan.subject, set = (id, v) => { const el = byId(id); if (el && v != null && v !== '') el.value = v; };
+  set('new_code', sj.code); set('new_name', sj.name); set('new_level', sj.level); set('new_credit', sj.credit); set('new_hpw', sj.hours_per_week); set('new_desc', courseAiDescription(plan));
+}
+function courseAiResultHtml(plan, s) {
+  const sj = plan.subject, isNew = COURSE_AI.mode === 'new', locked = !isNew && caiHasScores(s);
+  const lab = (k, v) => v ? `<div class="meta"><strong style="color:var(--black);">${k}</strong> ${escapeHtml(String(v))}</div>` : '';
+  const units = plan.units.map((u, i) => `<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer;">
+      <input type="checkbox" class="cai_u" data-i="${i}" ${u.assignment ? 'checked' : 'disabled'} style="width:auto;margin-top:5px;">
+      <span style="flex:1;"><strong>หน่วยที่ ${i + 1} ${escapeHtml(u.title)}</strong>${u.hours ? ` <span class="badge">${u.hours} ชม.</span>` : ''}
+        ${u.topics.length ? `<span class="meta" style="display:block;">${u.topics.map(escapeHtml).join(' · ')}</span>` : ''}
+        ${u.assignment ? `<span class="meta" style="display:block;">🎨 ชิ้นงาน: <strong>${escapeHtml(u.assignment.title)}</strong> — เกณฑ์ ${u.assignment.rubric.map(r => escapeHtml(r.name) + ' ' + r.max).join(' · ')}</span>` : ''}</span></label>`).join('');
+  const groups = plan.groups.map((g, i) => `<div class="meta" style="line-height:1.7;"><strong style="color:var(--black);">ส.${i + 1} ${escapeHtml(g.unit)}</strong> — ${g.items.map(it => escapeHtml(it.name) + ' ' + it.max).join(' · ')} <span class="badge">${g.items.reduce((a, it) => a + it.max, 0)}</span></div>`).join('');
+  return `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
+    ${lab('รหัสวิชา', sj.code)}${lab('ชื่อวิชา', sj.name)}${lab('ระดับ', sj.level)}${lab('หน่วยกิต', sj.credit)}${lab('ชั่วโมง/สัปดาห์', sj.hours_per_week)}
+    ${plan.objectives.length ? `<div class="meta" style="margin-top:6px;"><strong style="color:var(--black);">จุดประสงค์รายวิชา</strong><br>${plan.objectives.map((o, i) => (i + 1) + '. ' + escapeHtml(o)).join('<br>')}</div>` : ''}
+    <div style="margin-top:10px;font-weight:700;color:var(--red);">หน่วยการเรียนรู้ + ชิ้นงาน <span class="meta" style="font-weight:400;">(ติ๊กหน่วยที่ต้องการสร้างหัวข้อชิ้นงาน)</span></div>${units || '<div class="meta">ไม่พบหน่วยการเรียนรู้</div>'}
+    <div style="margin-top:10px;font-weight:700;color:var(--red);">โครงสร้างคะแนน 5 สมรรถนะ (รวม 70)</div>${groups}
+    <div style="margin-top:10px;">
+      ${isNew ? '' : `<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;"><input type="checkbox" id="cai_info" style="width:auto;margin-top:4px;"> <span>อัปเดตข้อมูลรายวิชา (รหัส/หน่วยกิต/ชั่วโมง + คำอธิบายพร้อมจุดประสงค์และหน่วยการเรียนรู้) <span class="meta">— ทับคำอธิบายเดิม</span></span></label>`}
+      <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;margin-top:6px;"><input type="checkbox" id="cai_score" ${locked ? 'disabled' : 'checked'} style="width:auto;margin-top:4px;"> <span>ตั้งโครงสร้างคะแนน 5 สมรรถนะตามที่ AI วิเคราะห์ ${locked ? '<span class="meta" style="color:#B3261E;">— วิชานี้มีคะแนนที่บันทึกแล้ว จึงไม่เปลี่ยนโครงสร้าง</span>' : '<span class="meta">— ทับโครงสร้างเดิม แก้ต่อได้ในแท็บรายงานผลคะแนน</span>'}</span></label>
+    </div>
+    ${isNew ? '<div class="meta" style="margin-top:8px;line-height:1.6;">ตรวจ/แก้ข้อมูลในฟอร์มด้านล่าง แล้วกด "เพิ่มรายวิชา" — ระบบจะสร้างชิ้นงานและโครงสร้างคะแนนตามที่ติ๊กไว้ให้พร้อมกัน</div>'
+      : '<button class="btn gold" id="cai_apply" style="margin-top:10px;" onclick="courseAiApplyExisting()">นำไปใช้กับรายวิชานี้</button>'}
+  </div>`;
+}
+
+/* ---- นำผลไปใช้ ---- */
+function persistSubject(s) {
+  enqueue('subj|' + s.subject_id, 'saveSubject', { subject: { subject_id: s.subject_id, subject_code: s.subject_code, subject_name: s.subject_name, level: s.level, credit_hours: s.credit_hours, description: s.description, room: s.room || '', days_of_week: s.days_of_week || [], hours_per_week: s.hours_per_week || 0 } });
+}
+async function courseAiApply(s, o) {
+  const plan = COURSE_AI.plan; if (!plan || !byId('cai_result')) return '';
+  const done = [];
+  if (o.info) {
+    const sj = plan.subject, desc = courseAiDescription(plan);
+    if (sj.code) s.subject_code = sj.code;
+    if (sj.credit) s.credit_hours = String(sj.credit);
+    if (sj.hours_per_week) s.hours_per_week = sj.hours_per_week;
+    if (desc) s.description = desc;
+    persistSubject(s); done.push('อัปเดตข้อมูลรายวิชา');
+  }
+  const picks = Array.from(document.querySelectorAll('.cai_u:checked')).map(c => Number(c.dataset.i)).filter(i => plan.units[i] && plan.units[i].assignment);
+  let ok = 0, fail = 0;
+  for (const i of picks) {
+    const a = plan.units[i].assignment, assignment = { title: a.title, description: a.description, due_at: '', rubric: a.rubric };
+    try {
+      const r = await api('saveAssignment', { subject_id: s.subject_id, assignment });
+      if (!s.assignments) s.assignments = [];
+      s.assignments.push({ assignment_id: r.assignment_id, subject_id: s.subject_id, title: a.title, description: a.description, due_at: '', rubric: a.rubric }); ok++;
+    } catch (e) { fail++; }
+  }
+  if (ok) done.push('สร้างชิ้นงาน ' + ok + ' รายการ');
+  if (fail) done.push('สร้างชิ้นงานไม่สำเร็จ ' + fail + ' รายการ (ต้องออนไลน์)');
+  const sc = byId('cai_score');
+  if (sc && sc.checked && !sc.disabled) {
+    const r = ensureReport(s), slots = rptSlots(s);
+    const groups = plan.groups.map((g, i) => ({ unit: g.unit, items: g.items.slice(0, slots[i]).map(it => ({ name: it.name, max: it.max })) }));
+    caiScaleTo70(groups);
+    r.comps = groups.map(g => ({ unit: g.unit, assignment_id: '', items: g.items }));
+    const cfg = Object.assign({}, r), scores = cfg.scores || {}; delete cfg.scores;
+    enqueue('report|' + s.subject_id, 'saveReport', { subject_id: s.subject_id, config: cfg, scores });
+    done.push('ตั้งโครงสร้างคะแนนแล้ว');
+  }
+  return done.join(' · ');
+}
+async function courseAiApplyExisting() {
+  const s = findSubject(COURSE_AI.sid), btn = byId('cai_apply'); if (!s || !COURSE_AI.plan) return;
+  btn.disabled = true; btn.textContent = 'กำลังนำไปใช้…';
+  const msg = await courseAiApply(s, { info: !!(byId('cai_info') && byId('cai_info').checked) });
+  const hadAsg = /ชิ้นงาน \d+ รายการ/.test(msg) && !/ไม่สำเร็จ/.test(msg);
+  COURSE_AI.plan = null; COURSE_AI.mode = '';
+  openSubjectDetail(s.subject_id, hadAsg ? 'assignment' : 'report');
+  toast(msg || 'ไม่ได้เลือกรายการใดให้นำไปใช้');
+}
 
 /* ---------------- ครู: จัดการนักเรียน ---------------- */
 async function refreshFromServer() {
