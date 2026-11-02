@@ -3201,15 +3201,129 @@ function showLogin(msg) {
       <input id="lg_pin" type="password" inputmode="numeric" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
       <div id="lg_err" class="error-msg">${escapeHtml(msg || '')}</div>
       <button class="btn gold" id="lg_btn" onclick="doLogin()">เข้าสู่ระบบ</button>
+      <div style="margin-top:14px;text-align:center;">
+        <button class="btn outline" onclick="showRegister()">สมัครนักเรียนใหม่</button>
+      </div>
       <div class="meta" style="margin-top:10px;line-height:1.7;">ลืม PIN ให้แจ้งครูรีเซ็ต · <a href="#" onclick="showApiSetup();return false;" style="color:#1B5E7A;">ตั้งค่าที่อยู่ระบบ</a></div>
     </div></div>`);
 }
-function showRolePicker() { if (!apiUrl()) showApiSetup(); else showLogin(); }
+function showRolePicker() { if (!apiUrl()) { const c = loadCachedBoot(); if (!c) showLogin(); else showLogin(); } else showLogin(); }
+
+/* ─── ระบบสมัครนักเรียน (localStorage) ─── */
+const REG_KEY = 'bps_students';
+function regLoad() { try { return JSON.parse(LS.get(REG_KEY) || '[]'); } catch(e) { return []; } }
+function regSave(arr) { LS.set(REG_KEY, JSON.stringify(arr)); }
+function regFind(id) { return regLoad().find(s => s.student_id === id.trim()); }
+
+function showRegister(errMsg) {
+  const LEVELS = ['ปวช.1','ปวช.2','ปวช.3','ปวส.1','ปวส.2','ม.1','ม.2','ม.3','ม.4','ม.5','ม.6','ระยะสั้น'];
+  render(`<div class="topbar"><div><h1>สมัครนักเรียนใหม่</h1><p>บุพสิกขา สิปปานุรักษ์</p></div></div>
+    <div class="container"><div class="card">
+      <h2>ข้อมูลนักเรียน</h2>
+      <label>ชื่อ-สกุล <span style="color:var(--red)">*</span></label>
+      <input id="rg_name" placeholder="เช่น นายสมชาย ใจดี" autocapitalize="words">
+      <label>ชื่อเล่น</label>
+      <input id="rg_nick" placeholder="เช่น ชาย">
+      <label>ระดับชั้น</label>
+      <select id="rg_level">${LEVELS.map(l=>`<option value="${l}">${l}</option>`).join('')}</select>
+      <label>ห้องเรียน</label>
+      <input id="rg_room" placeholder="เช่น วิจิตรศิลป์" inputmode="text">
+      <label>เลขที่</label>
+      <input id="rg_seat" type="number" inputmode="numeric" min="1" max="99" placeholder="1">
+      <label>วันเกิด</label>
+      <input id="rg_birth" type="date">
+      <label>รูปโปรไฟล์</label>
+      <input type="file" id="rg_photo_inp" accept="image/*" style="margin-bottom:6px;" onchange="regPhotoPreview(this)">
+      <div id="rg_photo_preview" style="margin-bottom:8px;"></div>
+      <label>รหัสนักเรียน <span style="color:var(--red)">*</span></label>
+      <input id="rg_id" placeholder="เช่น 6712345" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text">
+      <div class="meta" style="margin-bottom:4px;">ใช้สำหรับเข้าสู่ระบบ</div>
+      <label>PIN (ตัวเลข 6–10 หลัก) <span style="color:var(--red)">*</span></label>
+      <input id="rg_pin" type="password" inputmode="numeric" placeholder="ตัวเลข 6–10 หลัก">
+      <label>ยืนยัน PIN</label>
+      <input id="rg_pin2" type="password" inputmode="numeric" placeholder="กรอก PIN อีกครั้ง">
+      <div id="rg_err" class="error-msg">${escapeHtml(errMsg || '')}</div>
+      <button class="btn gold" onclick="doRegister()">สมัครและเข้าสู่ระบบ</button>
+      <div style="margin-top:10px;text-align:center;">
+        <button class="btn outline" onclick="showLogin()">← กลับ</button>
+      </div>
+    </div></div>`);
+}
+let REG_PHOTO_DATA = '';
+function regPhotoPreview(inp) {
+  const f = inp.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      const W = 300, H = 400; c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      const scale = Math.max(W/img.width, H/img.height);
+      const sw = img.width * scale, sh = img.height * scale;
+      ctx.drawImage(img, (W-sw)/2, (H-sh)/2, sw, sh);
+      REG_PHOTO_DATA = c.toDataURL('image/jpeg', 0.7);
+      const prev = byId('rg_photo_preview');
+      if (prev) prev.innerHTML = `<img src="${REG_PHOTO_DATA}" style="width:75px;height:100px;object-fit:cover;border:3px solid var(--red);border-radius:4px;">`;
+    };
+    img.src = e.target.result;
+  };
+  r.readAsDataURL(f);
+}
+function doRegister() {
+  const name = (byId('rg_name').value || '').trim();
+  const nick = (byId('rg_nick').value || '').trim();
+  const level = byId('rg_level').value;
+  const room = (byId('rg_room').value || '').trim();
+  const seat = parseInt(byId('rg_seat').value || '0', 10);
+  const birth = byId('rg_birth').value || '';
+  const id = (byId('rg_id').value || '').trim();
+  const pin = byId('rg_pin').value;
+  const pin2 = byId('rg_pin2').value;
+  const err = byId('rg_err');
+  if (!name) { err.textContent = 'กรุณากรอกชื่อ-สกุล'; return; }
+  if (!id) { err.textContent = 'กรุณากรอกรหัสนักเรียน'; return; }
+  if (!/^\d{6,10}$/.test(pin)) { err.textContent = 'PIN ต้องเป็นตัวเลข 6–10 หลัก'; return; }
+  if (pin !== pin2) { err.textContent = 'PIN ทั้งสองช่องไม่ตรงกัน'; return; }
+  if (regFind(id)) { err.textContent = 'รหัสนักเรียนนี้มีในระบบแล้ว กรุณาตรวจสอบหรือเข้าสู่ระบบ'; return; }
+  const newStu = { student_id: id, full_name: name, nickname: nick, level, room, seat_no: seat, birthdate: birth, photo: REG_PHOTO_DATA,
+    ability: { intelligence:0, speed:0, skill:0, perseverance:0, creativity:0, punctuality:0 }, rank_points: 0,
+    exam_attempts: [], submissions: [], read: {}, pin, created_at: new Date().toISOString() };
+  const all = regLoad(); all.push(newStu); regSave(all);
+  LS.set('bps_uid', id); LS.set('bps_role', 'student'); LS.set('bps_local_student', id);
+  REG_PHOTO_DATA = '';
+  localEnterStudent(newStu);
+}
+function localEnterStudent(stu) {
+  const me = { student_id: stu.student_id, username: stu.student_id, prefix: stu.prefix || '', full_name: stu.full_name || '', nickname: stu.nickname || '',
+    photo: stu.photo || '', level: stu.level || '', room: stu.room || '', seat_no: stu.seat_no || '', birthdate: stu.birthdate || '', active: true,
+    ability: Object.assign({ intelligence:0, speed:0, skill:0, perseverance:0, creativity:0, punctuality:0 }, stu.ability || {}),
+    rank_points: Number(stu.rank_points) || 0, exam_attempts: Array.isArray(stu.exam_attempts) ? stu.exam_attempts : [],
+    submissions: Array.isArray(stu.submissions) ? stu.submissions : [], read: stu.read || {} };
+  DEMO.roster = [me]; DEMO.student = me;
+  CURRENT_USER = { role: 'student', local: true };
+  enterStudent();
+}
+function saveLocalStudent() {
+  const id = LS.get('bps_local_student'); if (!id) return;
+  const me = DEMO.student; if (!me) return;
+  const all = regLoad(); const idx = all.findIndex(s => s.student_id === id);
+  if (idx < 0) return;
+  all[idx] = Object.assign(all[idx], { ability: me.ability, rank_points: me.rank_points, exam_attempts: me.exam_attempts, submissions: me.submissions, read: me.read, photo: me.photo });
+  regSave(all);
+}
 let LOGIN_PIN = '';
 async function doLogin() {
   const id = byId('lg_id').value.trim(), pin = byId('lg_pin').value, err = byId('lg_err'), btn = byId('lg_btn');
   if (!id || !pin) { err.textContent = 'กรอกรหัสผู้ใช้และ PIN'; return; }
   err.textContent = ''; btn.disabled = true; btn.textContent = 'กำลังเข้าสู่ระบบ…';
+  // ตรวจ localStorage ก่อน — นักเรียนที่สมัครไว้ในเครื่อง
+  const localStu = regFind(id);
+  if (localStu) {
+    if (localStu.pin !== pin) { err.textContent = 'PIN ไม่ถูกต้อง'; btn.disabled = false; btn.textContent = 'เข้าสู่ระบบ'; return; }
+    LS.set('bps_uid', id); LS.set('bps_role', 'student'); LS.set('bps_local_student', id);
+    localEnterStudent(localStu); return;
+  }
   try {
     const r = await api('login', { user_id: id, pin });
     LS.set('bps_token', r.token); LS.set('bps_uid', id); LS.set('bps_role', r.role);
@@ -3233,6 +3347,7 @@ async function logout() {
     if (pendingCount() && !confirm(`ยังมีข้อมูล ${pendingCount()} รายการที่ไม่ได้ซิงค์ (ออฟไลน์) ถ้าออกตอนนี้ข้อมูลเหล่านี้จะหาย ออกจากระบบเลยไหม?`)) return;
     qSave([]);
   }
+  if (LS.get('bps_local_student')) { saveLocalStudent(); LS.del('bps_local_student'); }
   clearSession(); CURRENT_USER = null; CURRENT_SUBJECT_ID = null; resetDemo(); showSync(); showLogin();
 }
 
@@ -3264,7 +3379,14 @@ async function doChangePin(forced) {
 /* ---------------- เริ่มแอป ---------------- */
 async function startApp() {
   registerSW();
-  if (!apiUrl()) { showApiSetup(); return; }
+  // ตรวจ local student session ก่อน (ไม่ต้องการ API)
+  const localId = LS.get('bps_local_student');
+  if (localId) {
+    const localStu = regFind(localId);
+    if (localStu) { localEnterStudent(localStu); return; }
+    else { LS.del('bps_local_student'); }
+  }
+  if (!apiUrl()) { showLogin(); return; }
   if (LS.get('bps_token')) {
     try { const boot = await api('bootstrap'); cacheBoot(boot); hydrate(boot); if (boot.must_change_pin) { showForcePin(); return; } enterApp(boot.role); flush(); return; }
     catch (e) {
