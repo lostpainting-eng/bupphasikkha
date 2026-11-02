@@ -3195,7 +3195,7 @@ function showLogin(msg) {
   render(`<div class="topbar"><div><h1>บุพสิกขา สิปปานุรักษ์</h1><p>สำนักช่างเขียนจิตรกรรมไทยแบบประเพณี</p></div></div>
     <div class="container"><div class="card">
       <h2>เข้าสู่ระบบ</h2>
-      <label>รหัสผู้ใช้ (นักเรียนใช้รหัสนักเรียน · ครูใช้ teacher)</label>
+      <label>รหัสผู้ใช้ (นักเรียนใช้รหัสนักเรียน)</label>
       <input id="lg_id" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" value="${escapeHtml(LS.get('bps_uid') || '')}" onkeydown="if(event.key==='Enter')byId('lg_pin').focus()">
       <label>PIN</label>
       <input id="lg_pin" type="password" inputmode="numeric" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
