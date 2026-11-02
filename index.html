@@ -1160,7 +1160,9 @@ function renderAttGroupBox(editing) {
   const box = byId('att_group_box'); if (!box) return;
   const id = byId('att_subject') && byId('att_subject').value, s = findSubject(id);
   if (!s) { box.innerHTML = ''; return; }
-  const n = rosterFor(id).length, wrapStyle = 'margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:#FAF4E4;';
+  ATT_PREVIEW.editing = !!editing;
+  const pv = ATT_PREVIEW.sid === id ? ATT_PREVIEW.group : '';
+  const n = attRoster(id).length, wrapStyle = 'margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:#FAF4E4;';
   if (s.room && !editing) {
     box.innerHTML = `<div style="${wrapStyle}display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <span>🔒 กลุ่มผู้เรียน <strong>${escapeHtml(s.room)}</strong> · ${n} คน</span>
@@ -1168,14 +1170,34 @@ function renderAttGroupBox(editing) {
       <button class="btn outline sm" style="margin:0 0 0 auto;" onclick="renderAttGroupBox(true)">เปลี่ยนกลุ่ม</button></div>`;
     return;
   }
-  const rooms = distinctRooms();
+  const rooms = distinctRooms(), sel = pv === '__all' ? '' : (pv || s.room || '');
+  const msg = s.room ? 'เปลี่ยนกลุ่มผู้เรียนของวิชานี้ — กำลังแสดง ' + (pv === '__all' ? 'ทุกกลุ่ม' : 'กลุ่ม ' + (pv || s.room)) + ' (' + n + ' คน) กด 🔒 เพื่อบันทึกเป็นกลุ่มของวิชา'
+    : (pv ? 'กำลังแสดงกลุ่ม ' + pv + ' (' + n + ' คน) — กด 🔒 เพื่อล็อกกลุ่มนี้กับวิชา จะได้แสดงกลุ่มนี้ทุกครั้ง' : 'วิชานี้ยังไม่ได้ล็อกกลุ่มผู้เรียน — ตอนนี้แสดงนักเรียนทุกคน (' + n + ' คน) เลือกกลุ่มเพื่อกรองรายชื่อ');
   box.innerHTML = `<div style="${wrapStyle}">
-    <div class="meta" style="color:var(--red);">${s.room ? 'เปลี่ยนกลุ่มผู้เรียนของวิชานี้' : 'วิชานี้ยังไม่ได้ล็อกกลุ่มผู้เรียน — ตอนนี้แสดงนักเรียนทุกคน (' + n + ' คน)'}</div>
+    <div class="meta" style="color:var(--red);">${msg}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px;">
-      <select id="att_lock_group" style="flex:1;min-width:150px;"><option value="">${s.room ? 'ไม่ล็อก (ทุกกลุ่ม)' : 'เลือกกลุ่มผู้เรียน…'}</option>${rooms.map(r => `<option value="${escapeHtml(r)}" ${s.room === r ? 'selected' : ''}>${escapeHtml(r)}</option>`).join('')}</select>
+      <select id="att_lock_group" style="flex:1;min-width:150px;" onchange="attPickGroup(this.value)"><option value="">${s.room ? 'ทุกกลุ่ม (ไม่ล็อก)' : 'ทุกกลุ่ม — เลือกกลุ่มผู้เรียน…'}</option>${rooms.map(r => `<option value="${escapeHtml(r)}" ${sel === r ? 'selected' : ''}>${escapeHtml(r)}</option>`).join('')}</select>
       <button class="btn gold sm" style="margin:0;" onclick="attLockGroup()">🔒 ล็อกกลุ่มกับวิชานี้</button>
-      ${s.room ? '<button class="btn outline sm" style="margin:0;" onclick="renderAttGroupBox(false)">ยกเลิก</button>' : ''}
+      ${s.room ? '<button class="btn outline sm" style="margin:0;" onclick="attCancelGroup()">ยกเลิก</button>' : ''}
     </div></div>`;
+}
+// กลุ่มที่เลือกดูชั่วคราวในหน้าเช็คชื่อ (ยังไม่ล็อกกับวิชา) — เลือกแล้วรายชื่อเปลี่ยนทันที
+const ATT_PREVIEW = { sid: '', group: '', editing: false };
+function attRoster(subjectId) {
+  if (ATT_PREVIEW.sid === subjectId && ATT_PREVIEW.group) {
+    return ATT_PREVIEW.group === '__all' ? DEMO.roster.filter(x => x.active !== false) : DEMO.roster.filter(x => x.active !== false && x.room === ATT_PREVIEW.group);
+  }
+  return rosterFor(subjectId);
+}
+function attPickGroup(v) {
+  const id = byId('att_subject').value, s = findSubject(id); if (!s) return;
+  ATT_PREVIEW.sid = id; ATT_PREVIEW.group = v || (s.room ? '__all' : '');
+  renderAttGroupBox(ATT_PREVIEW.editing);
+  loadAttendanceDraft();
+}
+function attCancelGroup() {
+  ATT_PREVIEW.sid = ''; ATT_PREVIEW.group = '';
+  renderAttGroupBox(false); loadAttendanceDraft();
 }
 function attLockGroup() {
   const id = byId('att_subject').value, s = findSubject(id), v = byId('att_lock_group').value;
@@ -1190,6 +1212,7 @@ function attLockGroup() {
 function onAttSubjectChange() {
   const subjectId = byId('att_subject').value;
   const s = DEMO.subjects.find(x => x.subject_id === subjectId);
+  ATT_PREVIEW.sid = ''; ATT_PREVIEW.group = '';
   renderAttGroupBox(false);
   const DAY_TH = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
   const hint = byId('att_day_hint');
@@ -1236,7 +1259,7 @@ function loadAttendanceDraft() {
   const date = byId('att_date').value;
   const existing = DEMO.attendance.find(a => a.subject_id === subjectId && a.date === date);
   ATTENDANCE_DRAFT = {};
-  rosterFor(subjectId).forEach(st => {
+  attRoster(subjectId).forEach(st => {
     const rec = existing && existing.records.find(r => r.student_id === st.student_id);
     ATTENDANCE_DRAFT[st.student_id] = rec ? rec.status : 'present';
   });
@@ -1245,7 +1268,7 @@ function loadAttendanceDraft() {
 }
 
 function renderAttendanceList() {
-  const rows = rosterFor(byId('att_subject').value).map(st => {
+  const rows = attRoster(byId('att_subject').value).map(st => {
     const status = ATTENDANCE_DRAFT[st.student_id];
     const mkBtn = (val) => { const a = ATT_STATUS[val], on = status === val;
       return `<button class="btn sm" style="margin:0;padding:8px 0;${on ? `background:${a.bg};color:${a.fg};border:1px solid ${a.bg};font-weight:600;` : 'background:#fff;color:var(--black);border:1px solid var(--line);'}" onclick="setAttendanceStatus('${st.student_id}','${val}')">${a.label}</button>`; };
@@ -1254,7 +1277,7 @@ function renderAttendanceList() {
       <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:8px;">${ATT_KEYS.map(mkBtn).join('')}</div>
     </div>`;
   }).join('');
-  const counts = ATT_KEYS.map(k => `${ATT_STATUS[k].label} <strong>${rosterFor(byId('att_subject').value).filter(st => ATTENDANCE_DRAFT[st.student_id] === k).length}</strong>`).join(' · ');
+  const counts = ATT_KEYS.map(k => `${ATT_STATUS[k].label} <strong>${attRoster(byId('att_subject').value).filter(st => ATTENDANCE_DRAFT[st.student_id] === k).length}</strong>`).join(' · ');
   const allBtns = ATT_KEYS.map(k => { const a = ATT_STATUS[k];
     return `<button class="btn sm" style="margin:0;padding:9px 0;background:${a.bg};color:${a.fg};border:none;font-weight:600;" onclick="setAllAttendance('${k}')">${a.label}ทั้งหมด</button>`; }).join('');
   const bulk = `<div style="background:#FAF4E4;border:1px solid var(--line);border-radius:12px;padding:10px;">
@@ -1266,7 +1289,7 @@ function renderAttendanceList() {
 }
 
 function setAllAttendance(status) {
-  rosterFor(byId('att_subject').value).forEach(st => { ATTENDANCE_DRAFT[st.student_id] = status; });
+  attRoster(byId('att_subject').value).forEach(st => { ATTENDANCE_DRAFT[st.student_id] = status; });
   renderAttendanceList();
 }
 function setAttendanceStatus(studentId, status) {
