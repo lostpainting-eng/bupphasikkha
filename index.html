@@ -166,10 +166,308 @@ function makeStudent(id, username, full_name, nickname, room, seat_no, ability, 
 
 const DEMO = { subjects: [], teacher: { prefix: 'นาย', full_name: '', nickname: '', position: 'ครู', department: '', institution: '', birthdate: '', phone: '', photo: '' }, attendance: [], roster: [], student: null };
 
+// ============================== แผนการจัดการเรียนรู้ (หลายวิชา) ==============================
+// ตารางสอน: อังคาร = สามกอง (21601-2014), พุธ = วสช. (20702-2017), พฤหัส = กะทู้ (21601-2014)
+
+// วิชา 1: ศิลปกรรมไทย (วสช.ภูเก็ต) — สอนวันพุธ 8.30-11.30
+// ภาคเรียน 2/2569 · 18 สัปดาห์ · สัปดาห์ละ 4 ชม. · 9 หน่วย
+const LESSON_PLAN = {
+  subject_code: '20702-2017',
+  subject_name: 'ศิลปกรรมไทย',
+  semester: '2/2569',
+  term_start: '2026-10-19',
+  teach_days: [3], // พุธ = 3 (0=อา, 1=จ, 2=อ, 3=พ, 4=พฤ, 5=ศ, 6=ส)
+  location: 'วสช.ภูเก็ต',
+  time: '8.30–11.30',
+  hours_per_week: 4,
+  total_sessions: 18,
+  units: [
+    { unit: 1, name: 'ความรู้ทั่วไปเกี่ยวกับศิลปกรรมไทย', sessions: [1,2], topics: ['1.1 ความหมายและความสำคัญของศิลปกรรมไทย', '1.2 ความเป็นมาและพัฒนาการของศิลปกรรมไทยตามยุคสมัย', '1.3 การจำแนกประเภทของงานศิลปกรรมไทย', '1.4 คุณค่าของศิลปกรรมไทยต่ออุตสาหกรรมท่องเที่ยว'] },
+    { unit: 2, name: 'จิตรกรรมไทย', sessions: [3,4], topics: ['2.1 ความหมายและลักษณะเฉพาะของจิตรกรรมไทย', '2.2 จิตรกรรมฝาผนังและเรื่องราวที่นิยมเขียน', '2.3 การเขียนลายไทยพื้นฐาน', '2.4 การบรรยายจิตรกรรมไทยเพื่อการท่องเที่ยว'] },
+    { unit: 3, name: 'ประติมากรรมไทย', sessions: [5,6], topics: ['3.1 ความหมายและประเภทของประติมากรรมไทย', '3.2 พุทธลักษณะและพระพุทธรูปสมัยต่าง ๆ', '3.3 ประติมากรรมประดับอาคารและงานปูนปั้น', '3.4 การบรรยายงานประติมากรรมไทยเพื่อการท่องเที่ยว'] },
+    { unit: 4, name: 'สถาปัตยกรรมไทย', sessions: [7,8], topics: ['4.1 ความหมายและประเภทของสถาปัตยกรรมไทย', '4.2 องค์ประกอบของอาคารทรงไทยและเครื่องลำยอง', '4.3 สถาปัตยกรรมไทยในแหล่งท่องเที่ยว', '4.4 การบรรยายลักษณะสถาปัตยกรรมไทยเพื่อการท่องเที่ยว'] },
+    { unit: 5, name: 'วิจิตรศิลป์และประณีตศิลป์ไทย', sessions: [9,10], topics: ['5.1 ความหมายและขอบข่ายของวิจิตรศิลป์', '5.2 งานประณีตศิลป์และงานช่างสิบหมู่', '5.3 งานหัตถศิลป์พื้นถิ่นภาคใต้', '5.4 การต่อยอดงานประณีตศิลป์สู่ของที่ระลึก'] },
+    { unit: 6, name: 'สังคีตศิลป์ไทย', sessions: [11,12], topics: ['6.1 ความหมายและประเภทของสังคีตศิลป์ไทย', '6.2 เครื่องดนตรีไทยและวงดนตรีไทย', '6.3 นาฏศิลป์และการแสดงพื้นบ้านภาคใต้', '6.4 การนำเสนอสังคีตศิลป์ในกิจกรรมท่องเที่ยว'] },
+    { unit: 7, name: 'การบรรยายลักษณะงานศิลปกรรมไทยเพื่อส่งเสริมการท่องเที่ยว', sessions: [13,14], topics: ['7.1 หลักการบรรยายและการเล่าเรื่องแหล่งท่องเที่ยว', '7.2 ศัพท์เฉพาะทางศิลปกรรมไทยและการใช้ภาษา', '7.3 การเขียนบทบรรยายนำชมงานศิลปกรรม', '7.4 การผลิตสื่อประกอบการบรรยายด้วยเครื่องมือดิจิทัล'] },
+    { unit: 8, name: 'แนวทางการอนุรักษ์ศิลปกรรมไทย', sessions: [15,16], topics: ['8.1 ความสำคัญและปัญหาของการอนุรักษ์ศิลปกรรมไทย', '8.2 กฎหมายและหน่วยงานที่เกี่ยวข้องกับการอนุรักษ์', '8.3 แนวทางการท่องเที่ยวอย่างรับผิดชอบ', '8.4 การจัดทำสื่อรณรงค์การอนุรักษ์ศิลปกรรมไทย'] },
+    { unit: 9, name: 'การนำเสนอศิลปกรรมไทยในแหล่งท่องเที่ยว', sessions: [17,18], topics: ['9.1 การวางแผนและออกแบบการนำเสนอศิลปกรรมไทย', '9.2 หลักการผลิตสื่อนำเสนอที่มีประสิทธิภาพ', '9.3 การผลิตสื่อนำเสนอด้วยเครื่องมือดิจิทัลและปัญญาประดิษฐ์', '9.4 การนำเสนอผลงานและประเมินผล'] },
+  ]
+};
+
+// คำนวณว่าวันนี้อยู่ในสัปดาห์ที่เท่าไหร่ของภาคเรียน
+function getLessonToday() {
+  const today = new Date();
+  const start = new Date(LESSON_PLAN.term_start);
+  // รีเซ็ตเวลาให้เป็น 00:00 สำหรับการคำนวณ
+  today.setHours(0,0,0,0);
+  start.setHours(0,0,0,0);
+  const diffDays = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return { status: 'before', daysUntil: Math.abs(diffDays) };
+  const weekNum = Math.floor(diffDays / 7) + 1; // สัปดาห์ที่ 1, 2, 3, ...
+  if (weekNum > LESSON_PLAN.total_sessions) return { status: 'after' };
+  // หาหน่วยที่ตรงกับสัปดาห์นี้
+  const unit = LESSON_PLAN.units.find(u => u.sessions[0] <= weekNum && weekNum <= u.sessions[1]);
+  if (!unit) return { status: 'notfound', weekNum };
+  // ครั้งที่สอน (sessions[0] = ครั้งแรกของหน่วย)
+  const sessionNum = weekNum; // ครั้งที่ 1-18
+  return { status: 'ok', weekNum, sessionNum, unit };
+}
+
+function renderLessonTodayCard() {
+  const info = getLessonToday();
+  const today = new Date();
+  const DAY_TH = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
+  const MON_TH = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+  const dateStr = `วัน${DAY_TH[today.getDay()]}ที่ ${today.getDate()} ${MON_TH[today.getMonth()]} ${today.getFullYear() + 543}`;
+  let body = '';
+  if (info.status === 'before') {
+    const startDate = new Date(LESSON_PLAN.term_start);
+    const sm = MON_TH[startDate.getMonth()];
+    body = `<p style="color:#999;">ภาคเรียน 2/2569 เริ่ม ${startDate.getDate()} ${sm} ${startDate.getFullYear()+543} (อีก ${info.daysUntil} วัน)</p>`;
+  } else if (info.status === 'after') {
+    body = `<p style="color:#999;">ภาคเรียน 2/2569 สิ้นสุดแล้ว</p>`;
+  } else if (info.status === 'ok') {
+    const u = info.unit;
+    const topicsHtml = u.topics.map(t => `<li>${escapeHtml(t)}</li>`).join('');
+    body = `
+      <div style="margin-bottom:8px;">
+        <span style="background:var(--gold);color:#000;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;">สัปดาห์ที่ ${info.weekNum} / 18</span>
+        <span style="color:#999;font-size:12px;margin-left:8px;">ครั้งที่ ${info.sessionNum}</span>
+      </div>
+      <div style="font-weight:700;font-size:16px;margin-bottom:6px;">หน่วยที่ ${u.unit} — ${escapeHtml(u.name)}</div>
+      <ul style="margin:0;padding-left:18px;line-height:1.9;">${topicsHtml}</ul>
+    `;
+  } else {
+    body = `<p style="color:#999;">ไม่พบข้อมูลแผนการสอนสำหรับวันนี้</p>`;
+  }
+  return `
+    <div class="card" style="border-left:4px solid var(--gold);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <h2 style="margin:0;border:none;padding:0;">📅 วันนี้ตามแผนสอนอะไร?</h2>
+        <span style="color:#999;font-size:13px;">${dateStr}</span>
+      </div>
+      <div style="font-size:12px;color:#aaa;margin-bottom:10px;">${LESSON_PLAN.subject_code} · ${escapeHtml(LESSON_PLAN.subject_name)} · ภาค ${LESSON_PLAN.semester}</div>
+      ${body}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <button class="btn outline sm" onclick="showLessonPlanFull()">ดูแผนทั้งภาคเรียน</button>
+        <button class="btn outline sm" onclick="setTermStartPrompt()">⚙️ ตั้งวันเริ่มภาคเรียน</button>
+      </div>
+    </div>
+  `;
+}
+
+function setTermStartPrompt() {
+  // โหลดค่าปัจจุบัน
+  try { const v = localStorage.getItem('bps_term_start'); if (v) LESSON_PLAN.term_start = v; } catch(e) {}
+  const cur = LESSON_PLAN.term_start;
+  const inp = prompt('วันเริ่มต้นภาคเรียน (YYYY-MM-DD)\nเช่น 2026-10-27 หรือ 2026-11-03', cur);
+  if (!inp) return;
+  const d = new Date(inp);
+  if (isNaN(d.getTime())) { alert('รูปแบบวันที่ไม่ถูกต้อง กรุณาใช้รูปแบบ YYYY-MM-DD'); return; }
+  LESSON_PLAN.term_start = inp;
+  try { localStorage.setItem('bps_term_start', inp); } catch(e) {}
+  renderSubjectList(); // รีเฟรชการ์ด
+}
+
+// โหลดวันเริ่มต้นที่บันทึกไว้จาก localStorage
+try { const v = localStorage.getItem('bps_term_start'); if (v) LESSON_PLAN.term_start = v; } catch(e) {}
+
+// วิชา 2: จิตรกรรมไทยแบบประเพณี (รหัส 21601-2014) — สอนวันอังคาร+พฤหัส
+// ภาคเรียน 2/2569 · เล่มที่ 2 · 20 ครั้ง · สัปดาห์ละ 3 ชม. · 5 หน่วย (หน่วยที่ 6-10) · ระบบธนาคารหน่วยกิต
+const LESSON_PLAN_JITT = {
+  subject_code: '21601-2014',
+  subject_name: 'จิตรกรรมไทยแบบประเพณี',
+  semester: '2/2569',
+  term_start: '2026-10-19',
+  teach_days: [2, 4], // อังคาร=2, พฤหัส=4
+  locations: { 2: 'รร.บ้านสามกอง', 4: 'รร.เทศบาล 2 บ้านกะทู้' },
+  times: { 2: '13.30–15.30', 4: '13.30–15.30' },
+  hours_per_week: 3,
+  total_sessions: 20,
+  units: [
+    { unit: 6, name: 'การเขียนภาพสัตว์หิมพานต์', sessions: [1,4], topics: ['6.1 ความเป็นมาและประเภทของสัตว์หิมพานต์', '6.2 โครงสร้างและสัดส่วนสัตว์หิมพานต์', '6.3 การเขียนและการตัดเส้น', '6.4 การลงสีและการประยุกต์ใช้'] },
+    { unit: 7, name: 'การเขียนเครื่องทรงและเครื่องประดับ', sessions: [5,8], topics: ['7.1 ประเภทของเครื่องทรงและเครื่องประดับ', '7.2 การเขียนศิราภรณ์', '7.3 การเขียนถนิมพิมพาภรณ์และภูษาภรณ์', '7.4 การตัดเส้น การลงสี และการปิดทอง'] },
+    { unit: 8, name: 'การเขียนต้นไม้และเขามอ', sessions: [9,12], topics: ['8.1 หลักการเขียนต้นไม้แบบไทย', '8.2 การเขียนเขามอและโขดหิน', '8.3 การเขียนน้ำ เมฆ และพื้นดิน', '8.4 การจัดองค์ประกอบภาพและการลงสี'] },
+    { unit: 9, name: 'การเขียนสถาปัตยกรรมไทย', sessions: [13,16], topics: ['9.1 องค์ประกอบของสถาปัตยกรรมไทย', '9.2 การเขียนปราสาทและอาคารทรงไทย', '9.3 การเขียนเครื่องประกอบอาคารและเครื่องสูง', '9.4 การจัดวางฉากและการลงสี'] },
+    { unit: 10, name: 'การสร้างสรรค์ผลงานจิตรกรรมไทยแบบประเพณีสู่มูลค่าเชิงพาณิชย์', sessions: [17,20], topics: ['10.1 การกำหนดแนวคิดและออกแบบผลงาน', '10.2 การสร้างสรรค์ผลงานจิตรกรรมไทยประยุกต์', '10.3 การต่อยอดสู่ผลิตภัณฑ์และการคิดต้นทุน', '10.4 การนำเสนอผลงานและการจัดทำแฟ้มสะสมผลงาน'] },
+  ]
+};
+try { const v = localStorage.getItem('bps_term_start_jitt'); if (v) LESSON_PLAN_JITT.term_start = v; } catch(e) {}
+
+// คำนวณครั้งที่สอน (แต่ละวันอังคาร/พฤหัส = 1 ครั้ง เริ่มจากสัปดาห์แรกของภาคเรียน)
+function getLessonTodayJitt() {
+  const today = new Date();
+  const dow = today.getDay();
+  if (!LESSON_PLAN_JITT.teach_days.includes(dow)) return { status: 'noclass' };
+  const start = new Date(LESSON_PLAN_JITT.term_start);
+  today.setHours(0,0,0,0);
+  start.setHours(0,0,0,0);
+  const diffDays = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return { status: 'before', daysUntil: Math.abs(diffDays) };
+  const weekNum = Math.floor(diffDays / 7) + 1;
+  // แต่ละสัปดาห์มี 2 ครั้ง (อ.+พฤ.) คำนวณครั้งที่
+  const baseSession = (weekNum - 1) * 2 + 1; // ครั้งแรกของสัปดาห์
+  // ถ้าวันอังคาร = ครั้งที่คี่, พฤหัส = ครั้งที่คู่ของสัปดาห์นั้น
+  const sessionNum = dow === 2 ? baseSession : baseSession + 1;
+  if (sessionNum > LESSON_PLAN_JITT.total_sessions) return { status: 'after' };
+  const unit = LESSON_PLAN_JITT.units.find(u => u.sessions[0] <= sessionNum && sessionNum <= u.sessions[1]);
+  if (!unit) return { status: 'notfound', sessionNum };
+  return { status: 'ok', weekNum, sessionNum, unit, dow, location: LESSON_PLAN_JITT.locations[dow], time: LESSON_PLAN_JITT.times[dow] };
+}
+
+function renderLessonTodayJittCard() {
+  const info = getLessonTodayJitt();
+  const today = new Date();
+  const DAY_TH = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
+  const MON_TH = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+  if (info.status === 'noclass') return '';
+  const dateStr = `วัน${DAY_TH[today.getDay()]}ที่ ${today.getDate()} ${MON_TH[today.getMonth()]} ${today.getFullYear() + 543}`;
+  let body = '';
+  if (info.status === 'before') {
+    const sd = new Date(LESSON_PLAN_JITT.term_start);
+    body = `<p style="color:#999;">ภาคเรียน 2/2569 เริ่ม ${sd.getDate()} ${MON_TH[sd.getMonth()]} ${sd.getFullYear()+543} (อีก ${info.daysUntil} วัน)</p>`;
+  } else if (info.status === 'after') {
+    body = `<p style="color:#999;">ภาคเรียน 2/2569 สิ้นสุดแล้ว</p>`;
+  } else if (info.status === 'ok') {
+    const u = info.unit;
+    const topicsHtml = u.topics.map(t => `<li>${escapeHtml(t)}</li>`).join('');
+    body = `
+      <div style="margin-bottom:8px;">
+        <span style="background:#b87333;color:#fff;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;">ครั้งที่ ${info.sessionNum} / 20</span>
+        <span style="color:#999;font-size:12px;margin-left:8px;">📍 ${escapeHtml(info.location)} · ${info.time}</span>
+      </div>
+      <div style="font-weight:700;font-size:16px;margin-bottom:6px;">หน่วยที่ ${u.unit} — ${escapeHtml(u.name)}</div>
+      <ul style="margin:0;padding-left:18px;line-height:1.9;">${topicsHtml}</ul>
+    `;
+  } else {
+    body = `<p style="color:#999;">ไม่พบข้อมูลแผนการสอนสำหรับวันนี้</p>`;
+  }
+  return `
+    <div class="card" style="border-left:4px solid #b87333;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <h2 style="margin:0;border:none;padding:0;">🎨 จิตรกรรมไทยวันนี้</h2>
+        <span style="color:#999;font-size:13px;">${dateStr}</span>
+      </div>
+      <div style="font-size:12px;color:#aaa;margin-bottom:10px;">${LESSON_PLAN_JITT.subject_code} · ${escapeHtml(LESSON_PLAN_JITT.subject_name)} · ภาค ${LESSON_PLAN_JITT.semester}</div>
+      ${body}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <button class="btn outline sm" onclick="showLessonPlanJittFull()">ดูแผนทั้งภาคเรียน</button>
+      </div>
+    </div>
+  `;
+}
+
+function showLessonPlanJittFull() {
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const start = new Date(LESSON_PLAN_JITT.term_start);
+  start.setHours(0,0,0,0);
+  const diffDays = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+  const weekNum = diffDays >= 0 ? Math.floor(diffDays / 7) + 1 : 0;
+  const dow = today.getDay();
+  const baseSession = (weekNum - 1) * 2 + 1;
+  const currentSession = dow === 2 ? baseSession : dow === 4 ? baseSession + 1 : weekNum > 0 ? baseSession : 0;
+  const rows = LESSON_PLAN_JITT.units.map(u => {
+    const [s1, s2] = u.sessions;
+    const isActive = currentSession >= s1 && currentSession <= s2;
+    const isDone = currentSession > s2;
+    const badge = isActive ? '<span style="background:#b87333;color:#fff;padding:1px 8px;border-radius:8px;font-size:11px;margin-left:6px;">⬅ ปัจจุบัน</span>' : isDone ? '<span style="color:#666;font-size:11px;margin-left:6px;">✓ ผ่านแล้ว</span>' : '';
+    const topicsHtml = u.topics.map(t => `<li style="color:#bbb;">${escapeHtml(t)}</li>`).join('');
+    return `
+      <div style="border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px;${isActive?'border-color:#b87333;background:rgba(184,115,51,0.07)':''}">
+        <div style="font-weight:700;">หน่วยที่ ${u.unit} — ${escapeHtml(u.name)} ${badge}</div>
+        <div style="font-size:12px;color:#888;margin:3px 0 6px;">ครั้งที่ ${s1}–${s2}</div>
+        <ul style="margin:0;padding-left:16px;font-size:13px;line-height:1.8;">${topicsHtml}</ul>
+      </div>
+    `;
+  }).join('');
+  byId('teacher-body').innerHTML = `
+    <button class="btn outline sm" onclick="renderSubjectList()" style="margin-bottom:10px;">‹ กลับ</button>
+    <div class="card">
+      <h2>แผนการเรียนรู้ทั้งภาคเรียน</h2>
+      <div style="font-size:13px;color:#aaa;margin-bottom:4px;">${LESSON_PLAN_JITT.subject_code} · ${escapeHtml(LESSON_PLAN_JITT.subject_name)} · ภาค ${LESSON_PLAN_JITT.semester} · 20 ครั้ง · 5 หน่วย</div>
+      <div style="font-size:12px;color:#aaa;margin-bottom:12px;">📍 อังคาร: รร.บ้านสามกอง · พฤหัส: รร.เทศบาล 2 บ้านกะทู้ · 13.30–15.30</div>
+      ${rows}
+    </div>
+  `;
+}
+
+function showLessonPlanFull() {
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const start = new Date(LESSON_PLAN.term_start);
+  start.setHours(0,0,0,0);
+  const diffDays = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+  const currentWeek = diffDays >= 0 ? Math.floor(diffDays / 7) + 1 : 0;
+  const rows = LESSON_PLAN.units.map(u => {
+    const [s1, s2] = u.sessions;
+    const isActive = currentWeek >= s1 && currentWeek <= s2;
+    const isDone = currentWeek > s2;
+    const badge = isActive ? '<span style="background:var(--gold);color:#000;padding:1px 8px;border-radius:8px;font-size:11px;margin-left:6px;">⬅ ปัจจุบัน</span>' : isDone ? '<span style="color:#666;font-size:11px;margin-left:6px;">✓ ผ่านแล้ว</span>' : '';
+    const topicsHtml = u.topics.map(t => `<li style="color:#bbb;">${escapeHtml(t)}</li>`).join('');
+    return `
+      <div style="border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px;${isActive?'border-color:var(--gold);background:rgba(198,155,66,0.07)':''}">
+        <div style="font-weight:700;">หน่วยที่ ${u.unit} — ${escapeHtml(u.name)} ${badge}</div>
+        <div style="font-size:12px;color:#888;margin:3px 0 6px;">สอนครั้งที่ ${s1}–${s2} (สัปดาห์ที่ ${s1}–${s2})</div>
+        <ul style="margin:0;padding-left:16px;font-size:13px;line-height:1.8;">${topicsHtml}</ul>
+      </div>
+    `;
+  }).join('');
+  byId('teacher-body').innerHTML = `
+    <button class="btn outline sm" onclick="renderSubjectList()" style="margin-bottom:10px;">‹ กลับ</button>
+    <div class="card">
+      <h2>แผนการเรียนรู้ทั้งภาคเรียน</h2>
+      <div style="font-size:13px;color:#aaa;margin-bottom:12px;">${LESSON_PLAN.subject_code} · ${escapeHtml(LESSON_PLAN.subject_name)} · ภาค ${LESSON_PLAN.semester} · 18 สัปดาห์ · 9 หน่วย</div>
+      ${rows}
+    </div>
+  `;
+}
+
 const ABILITY_MAX = 100;                       // คะแนนความสามารถเต็ม 100
 const ABILITY_PER_LEVEL = ABILITY_MAX / 10;    // 10 คะแนนต่อ 1 ระดับ (ระดับ 10 = 90 ขึ้นไป)
 // คะแนนความสามารถที่ได้จากกิจกรรม (สเกลเต็ม 100)
-const GAIN = { perCorrect: 3, speedFast: 7, skillMax: 30, perseverance: 7, punctuality: 10 };
+const GAIN = { speedFast: 3, perseverance: 7, punctuality: 10 };
+
+// คำนวณ intelligence ใหม่ทั้งหมดจากผลสอบ (เฉลี่ยตามหน่วย)
+function recalcIntelligence(subjectId) {
+  const st = DEMO.student; if (!st) return;
+  const s = findSubject(subjectId); if (!s) return;
+  const unitCount = s.units ? s.units.length : 1;
+  // หา unit ของแต่ละ exam จาก s.exams[i].unit
+  // เก็บคะแนนสูงสุดต่อหน่วยจาก exam_attempts (% ของข้อสอบหน่วยนั้น)
+  const bestPerUnit = {}; // unit_no → pct (0–1)
+  st.exam_attempts.filter(a => a.subject_id === subjectId).forEach(att => {
+    const ex = s.exams[att.exam_index];
+    if (!ex || ex.unit == null) return;
+    const pct = ex.questions.length > 0 ? att.score / ex.questions.length : 0;
+    if (bestPerUnit[ex.unit] == null || pct > bestPerUnit[ex.unit]) bestPerUnit[ex.unit] = pct;
+  });
+  const unitsDone = Object.keys(bestPerUnit).length;
+  if (unitsDone === 0) return; // ยังไม่สอบ ไม่เปลี่ยน
+  const sumPct = Object.values(bestPerUnit).reduce((a,b) => a+b, 0);
+  // intelligence = (ผลรวม% ÷ จำนวนหน่วยทั้งหมด) × 100
+  const intel = Math.round(sumPct / unitCount * 100 * 10) / 10;
+  st.ability['intelligence'] = Math.min(100, intel);
+}
+
+// คำนวณ skill ใหม่ทั้งหมดจากการส่งงาน (เฉลี่ยตามหน่วย)
+function recalcSkill(subjectId) {
+  const st = DEMO.student; if (!st) return;
+  const s = findSubject(subjectId); if (!s) return;
+  const unitCount = s.units ? s.units.length : 1;
+  const bestPerUnit = {};
+  st.submissions.filter(sub => sub.subject_id === subjectId).forEach(sub => {
+    const a = s.assignments[sub.assignment_index];
+    if (!a || a.unit == null) return;
+    const pct = sub.max_total > 0 ? sub.total / sub.max_total : 0;
+    if (bestPerUnit[a.unit] == null || pct > bestPerUnit[a.unit]) bestPerUnit[a.unit] = pct;
+  });
+  const unitsDone = Object.keys(bestPerUnit).length;
+  if (unitsDone === 0) return;
+  const sumPct = Object.values(bestPerUnit).reduce((a,b) => a+b, 0);
+  const skill = Math.round(sumPct / unitCount * 100 * 10) / 10;
+  st.ability['skill'] = Math.min(100, skill);
+}
 function addAbility(key, v) { const a = DEMO.student.ability; a[key] = Math.min(ABILITY_MAX, Math.round(((Number(a[key]) || 0) + v) * 10) / 10); }
 function abilityRank(val) {
   const level = Math.max(1, Math.min(10, Math.floor(val / ABILITY_PER_LEVEL) + 1));
@@ -752,21 +1050,88 @@ function saveTeacherProfile() {
   switchTeacherTab('profile');
 }
 
+// คืนวันที่ล่าสุด (≤ วันนี้) ที่ตรงกับ days_of_week ของวิชา
+// ถ้าไม่มี days_of_week หรือว่าง → คืน todayISO()
+function lastTeachDate(subject) {
+  const days = subject && subject.days_of_week;
+  if (!days || !days.length) return todayISO();
+  const today = new Date(); today.setHours(0,0,0,0);
+  for (let d = 0; d <= 6; d++) {
+    const t = new Date(today); t.setDate(today.getDate() - d);
+    if (days.includes(t.getDay())) return t.toISOString().slice(0,10);
+  }
+  return todayISO();
+}
+
 function renderAttendanceTab() {
-  const subjectOptions = DEMO.subjects.map(s => `<option value="${s.subject_id}">${escapeHtml(s.subject_name)}</option>`).join('');
   const todayStr = todayISO();
+  // สร้าง options — วิชาที่มี days_of_week ให้แสดงวันที่สอนด้วย
+  const DAY_SHORT = ['อา','จ','อ','พ','พฤ','ศ','ส'];
+  const subjectOptions = DEMO.subjects.map(s => {
+    const dayLabel = (s.days_of_week && s.days_of_week.length)
+      ? ' [' + s.days_of_week.map(d => DAY_SHORT[d]).join('/') + ']' : '';
+    return `<option value="${s.subject_id}">${escapeHtml(s.subject_name)}${dayLabel}</option>`;
+  }).join('');
+  // หาวิชาแรกในรายการเพื่อ default วันที่
+  const firstSubj = DEMO.subjects[0];
+  const defaultDate = lastTeachDate(firstSubj);
   byId('teacher-body').innerHTML = `
     <div class="card">
       <h2>เช็คชื่อเข้าเรียน</h2>
       <label>รายวิชา</label>
-      <select id="att_subject" onchange="loadAttendanceDraft()">${subjectOptions}</select>
+      <select id="att_subject" onchange="onAttSubjectChange()">${subjectOptions}</select>
+      <div id="att_day_hint" class="meta" style="margin-top:4px;color:var(--red);min-height:18px;"></div>
       <label>วันที่</label>
-      ${dateField('att_date', todayStr, 'loadAttendanceDraft')}
+      ${dateField('att_date', defaultDate, 'validateAttDate')}
+      <div id="att_date_warn" class="meta" style="margin-top:4px;color:#D4A82A;min-height:18px;"></div>
       <div id="att_list" style="margin-top:12px;"></div>
       <div id="att_saved" class="meta" style="margin-top:6px;"></div>
       <button class="btn gold" onclick="saveAttendance()">บันทึกการเช็คชื่อ</button>
     </div>
   `;
+  onAttSubjectChange();
+}
+
+function onAttSubjectChange() {
+  const subjectId = byId('att_subject').value;
+  const s = DEMO.subjects.find(x => x.subject_id === subjectId);
+  const DAY_TH = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
+  const hint = byId('att_day_hint');
+  if (hint) {
+    if (s && s.days_of_week && s.days_of_week.length) {
+      hint.textContent = '📅 วิชานี้สอนวัน ' + s.days_of_week.map(d => DAY_TH[d]).join(', ');
+    } else {
+      hint.textContent = '';
+    }
+  }
+  // ปรับวันที่ให้ตรงกับวันสอนล่าสุดของวิชา
+  const dateFld = byId('att_date');
+  if (dateFld) {
+    const best = lastTeachDate(s);
+    dateFld.value = best;
+  }
+  validateAttDate();
+}
+
+function validateAttDate() {
+  const subjectId = byId('att_subject') && byId('att_subject').value;
+  const s = DEMO.subjects.find(x => x.subject_id === subjectId);
+  const dateFld = byId('att_date');
+  const warn = byId('att_date_warn');
+  if (!dateFld || !warn) return;
+  const days = s && s.days_of_week;
+  if (days && days.length) {
+    const d = new Date(dateFld.value); d.setHours(12);
+    const dow = d.getDay();
+    if (!days.includes(dow)) {
+      const DAY_TH = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
+      warn.textContent = '⚠️ วันที่เลือกไม่ตรงกับวันสอน (' + days.map(x => DAY_TH[x]).join('/') + ') — บันทึกได้แต่ควรตรวจสอบอีกครั้ง';
+    } else {
+      warn.textContent = '';
+    }
+  } else {
+    warn.textContent = '';
+  }
   loadAttendanceDraft();
 }
 
@@ -816,6 +1181,17 @@ function setAttendanceStatus(studentId, status) {
 function saveAttendance() {
   const subjectId = byId('att_subject').value;
   const date = byId('att_date').value;
+  // ตรวจสอบวันสอนก่อนบันทึก
+  const s = DEMO.subjects.find(x => x.subject_id === subjectId);
+  const days = s && s.days_of_week;
+  if (days && days.length) {
+    const d = new Date(date); d.setHours(12);
+    if (!days.includes(d.getDay())) {
+      const DAY_TH = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
+      const ok = confirm('วันที่เลือก (' + fmtThaiDate(date) + ') ไม่ตรงกับวันสอน (' + days.map(x => DAY_TH[x]).join('/') + ')\nยืนยันบันทึกต่อไปหรือไม่?');
+      if (!ok) return;
+    }
+  }
   const records = Object.keys(ATTENDANCE_DRAFT).map(sid => ({ student_id: sid, status: ATTENDANCE_DRAFT[sid] }));
   const idx = DEMO.attendance.findIndex(a => a.subject_id === subjectId && a.date === date);
   const entry = { subject_id: subjectId, date, records };
@@ -826,6 +1202,8 @@ function saveAttendance() {
 function renderSubjectList() {
   const chips = DEMO.subjects.map(s => `<span class="subj-chip" onclick="openSubjectDetail('${s.subject_id}')">${escapeHtml(s.subject_name)} <span class="badge">${escapeHtml(s.level)}</span></span>`).join('');
   byId('teacher-body').innerHTML = `
+    ${renderLessonTodayCard()}
+    ${renderLessonTodayJittCard()}
     <div class="card">
       <h2>รายวิชาทั้งหมด — คลิกเพื่อจัดการ</h2>
       <div>${chips || '<p style="color:#999;">ยังไม่มีรายวิชา</p>'}</div>
@@ -1114,7 +1492,7 @@ async function generateKnowledge(subjectId) {
 function renderExamTab(s) {
   const examRows = s.exams.map((ex, i) => `
     <div class="row">
-      <div><strong>${escapeHtml(ex.title)}</strong> <span class="badge">${ex.questions.length} ข้อ</span> <span class="badge">${ex.duration_minutes} นาที</span>${rptBadges(s, 'e', i)}
+      <div><strong>${escapeHtml(ex.title)}</strong> <span class="badge">${ex.questions.length} ข้อ</span> <span class="badge">${ex.duration_minutes} นาที</span>${ex.unit != null ? ` <span class="badge">หน่วย ${ex.unit}</span>` : ''}${rptBadges(s, 'e', i)}
         ${ex.status==='released' ? '<span class="badge gold">ปล่อยสอบแล้ว</span>' : ex.status==='closed' ? '<span class="badge gray">ปิดแล้ว</span>' : '<span class="badge red">ฉบับร่าง</span>'}
       </div>
       <div>
@@ -1132,6 +1510,7 @@ function renderExamTab(s) {
     </div>
     <div class="card">
       <h2>สร้างข้อสอบใหม่ด้วย AI</h2>
+      <label>หน่วยการเรียนรู้</label><select id="exam_unit">${(s.units||[]).map(u=>`<option value="${u.unit}">หน่วยที่ ${u.unit} — ${u.name}</option>`).join('')}<option value="">ไม่ระบุหน่วย</option></select>
       <label>ชื่อชุดข้อสอบ</label><input id="exam_title" placeholder="เช่น ทดสอบหน่วยที่ 1">
       <label>จำนวนข้อ</label><input id="exam_count" type="number" value="5" min="3" max="15">
       <label>เวลาทำ (นาที ต่อคน — นับถอยหลังตั้งแต่เริ่มทำ)</label><input id="exam_duration" type="number" value="15" min="5" max="60">
@@ -1163,7 +1542,9 @@ async function generateExam(subjectId) {
     const prompt = `จากคำอธิบายรายวิชาต่อไปนี้ ให้สร้างข้อสอบปรนัย 4 ตัวเลือก จำนวน ${count} ข้อ ครอบคลุมเนื้อหาสำคัญ ระดับความยากเหมาะกับนักเรียน${s.level} แต่ละข้อมีตัวเลือกที่ชัดเจน ไม่กำกวม\n\nชื่อวิชา: ${s.subject_name}\nคำอธิบายรายวิชา: ${s.description}\n\nตอบเป็น JSON array เท่านั้น รูปแบบ: [{"question":"...","choices":["...","...","...","..."],"correct_index":0}] โดย correct_index คือตำแหน่ง (0-3) ของตัวเลือกที่ถูกต้อง`;
     const data = await sample.json(prompt, { modelTier: 'default' });
     if (!Array.isArray(data) || data.length === 0) throw { code:'invalid_json', message:'รูปแบบไม่ถูกต้อง' };
-    s.exams.push({ title, questions: data, duration_minutes: duration, status: 'draft', created_at: new Date().toISOString() });
+    const unitVal = byId('exam_unit') ? byId('exam_unit').value : '';
+    const unitNo = unitVal !== '' ? parseInt(unitVal, 10) : null;
+    s.exams.push({ title, unit: unitNo, questions: data, duration_minutes: duration, status: 'draft', created_at: new Date().toISOString() });
     renderExamReview(s.subject_id, s.exams.length - 1); // ให้ครูตรวจทาน/แก้ไขก่อน แทนที่จะกลับไปหน้ารายการเลย
   } catch (e) {
     byId('exam_err').textContent = aiErrorMessage(e);
@@ -1217,7 +1598,7 @@ function deleteExamQuestion(subjectId, examIdx, qi) {
 function renderAssignmentTab(s) {
   const rows = s.assignments.map((a, i) => `
     <div class="row">
-      <div><strong>${escapeHtml(a.title)}</strong><div class="meta">เกณฑ์ ${a.rubric.length} ข้อ · กำหนดส่ง ${a.due_at ? fmtThaiDate(a.due_at) : 'ไม่กำหนด'}</div><div style="margin-top:4px;">${rptBadges(s, 'a', a.assignment_id).trim()}</div></div>
+      <div><strong>${escapeHtml(a.title)}</strong>${a.unit != null ? ` <span class="badge">หน่วย ${a.unit}</span>` : ''}<div class="meta">เกณฑ์ ${a.rubric.length} ข้อ · กำหนดส่ง ${a.due_at ? fmtThaiDate(a.due_at) : 'ไม่กำหนด'}</div><div style="margin-top:4px;">${rptBadges(s, 'a', a.assignment_id).trim()}</div></div>
     </div>
   `).join('') || '<p style="color:#999;font-size:calc(13.5px * var(--fs));">ยังไม่มีหัวข้อชิ้นงาน</p>';
 
@@ -1225,6 +1606,7 @@ function renderAssignmentTab(s) {
     <div class="card"><h2>หัวข้อชิ้นงานทั้งหมด</h2>${rows}</div>
     <div class="card">
       <h2>เพิ่มหัวข้อชิ้นงานใหม่</h2>
+      <label>หน่วยการเรียนรู้</label><select id="asg_unit">${(s.units||[]).map(u=>`<option value="${u.unit}">หน่วยที่ ${u.unit} — ${u.name}</option>`).join('')}<option value="">ไม่ระบุหน่วย</option></select>
       <label>ชื่อชิ้นงาน</label><input id="asg_title" placeholder="เช่น ภาพเครื่องทรง ชฎาเดินหน">
       <label>กำหนดส่ง</label>${dateField('asg_due', '')}
       <label>เกณฑ์ให้คะแนน (ชื่อเกณฑ์ + คะแนนเต็ม)</label>
@@ -1255,7 +1637,9 @@ function addAssignmentDemo(subjectId) {
     const inputs = row.querySelectorAll('input');
     return { name: inputs[0].value.trim() || 'เกณฑ์', max: parseInt(inputs[1].value, 10) || 10 };
   }).filter(r => r.name);
-  s.assignments.push({ assignment_id:'ASG_'+Math.random().toString(36).slice(2,8), title, due_at: byId('asg_due').value, rubric, created_at:new Date().toISOString() });
+  const asgUnitVal = byId('asg_unit') ? byId('asg_unit').value : '';
+  const asgUnitNo = asgUnitVal !== '' ? parseInt(asgUnitVal, 10) : null;
+  s.assignments.push({ assignment_id:'ASG_'+Math.random().toString(36).slice(2,8), title, unit: asgUnitNo, due_at: byId('asg_due').value, rubric, created_at:new Date().toISOString() });
   renderAssignmentTab(s);
 }
 
@@ -1650,7 +2034,7 @@ function submitExam(timedOut) {
   DEMO.student.exam_attempts.push({ subject_id: EXAM_RUNNER.subjectId, exam_index: EXAM_RUNNER.examIndex, score: correct, submitted_at: new Date().toISOString(), timed_out: timedOut });
   const usedMs = Date.now() - (EXAM_RUNNER.startAt || Date.now()), speedGain = (!timedOut && usedMs <= ex.duration_minutes * 60 * 1000 / 2) ? GAIN.speedFast : 0;
   if (speedGain) addAbility('speed', speedGain);
-  addAbility('intelligence', correct * GAIN.perCorrect);
+  recalcIntelligence(EXAM_RUNNER.subjectId);
   DEMO.student.rank_points += correct * 0.3;
   byId('student-body').innerHTML = `
     <div class="card">
@@ -1723,7 +2107,7 @@ async function submitWork(subjectId, idx) {
     const maxTotal = a.rubric.reduce((sum,r) => sum + r.max, 0);
     const onTime = !a.due_at || new Date() <= new Date(a.due_at + 'T23:59:59');
     DEMO.student.submissions.push({ subject_id: subjectId, assignment_index: idx, result, total, max_total: maxTotal, on_time: onTime, submitted_at: new Date().toISOString() });
-    addAbility('skill', Math.round(total / maxTotal * GAIN.skillMax));
+    recalcSkill(subjectId);
     addAbility('perseverance', GAIN.perseverance);
     if (onTime) addAbility('punctuality', GAIN.punctuality);
     DEMO.student.rank_points += total/maxTotal*2;
