@@ -3262,7 +3262,7 @@ setInterval(() => { if (pendingCount()) flush(); }, 30000);
 /* ---------------- ข้อมูลในหน้า ← ข้อมูลจากเซิร์ฟเวอร์ ---------------- */
 function mapStudent(u) {
   return { student_id: u.student_id, username: u.student_id, prefix: u.prefix || '', full_name: u.full_name || '', nickname: u.nickname || '', photo: u.photo || '',
-    level: '', room: u.room || '', seat_no: u.seat_no || '', birthdate: u.birthdate || '', active: u.active !== false,
+    level: '', room: u.room || '', seat_no: u.seat_no || '', birthdate: u.birthdate || '', active: u.active !== false, pending: !!u.pending,
     ability: Object.assign({ intelligence: 0, speed: 0, skill: 0, perseverance: 0, creativity: 0, punctuality: 0 }, u.ability || {}),
     rank_points: Number(u.rank_points) || 0, exam_attempts: [], submissions: [], read: {} };
 }
@@ -3276,11 +3276,12 @@ function hydrate(boot) {
   const reports = boot.reports || {};
   if (boot.role === 'teacher') {
     DEMO.teacher = Object.assign({ prefix: 'นาย', full_name: '', nickname: '', position: 'ครู', department: '', institution: '', birthdate: '', phone: '', photo: '' }, boot.me);
-    DEMO.roster = (boot.students || []).map(mapStudent);
+    const allStu = (boot.students || []).map(mapStudent);
+    DEMO.pending = allStu.filter(s => s.pending); DEMO.roster = allStu.filter(s => !s.pending);   // นักเรียนที่สมัครเองและรอครูอนุมัติ แยกไว้ต่างหาก
     DEMO.student = null;
   } else {
     const me = mapStudent(boot.me);
-    DEMO.roster = [me]; DEMO.student = me;
+    DEMO.roster = [me]; DEMO.student = me; DEMO.pending = [];
   }
   DEMO.subjects = (boot.subjects || []).map(s => mapSubject(s, reports));
   DEMO.attendance = boot.attendance || [];
@@ -3293,7 +3294,7 @@ function cacheBoot(boot) {
 }
 function loadCachedBoot() { try { return JSON.parse(LS.get('bps_boot') || 'null'); } catch (e) { return null; } }
 function clearSession() { ['bps_token', 'bps_uid', 'bps_role', 'bps_boot'].forEach(k => LS.del(k)); }
-function resetDemo() { DEMO.subjects = []; DEMO.roster = []; DEMO.attendance = []; DEMO.student = null; }
+function resetDemo() { DEMO.subjects = []; DEMO.roster = []; DEMO.pending = []; DEMO.attendance = []; DEMO.student = null; }
 
 /* ---------------- หน้าเข้าสู่ระบบ ---------------- */
 function showApiSetup(msg) {
@@ -3364,7 +3365,7 @@ function showRegister(errMsg) {
       <label>ยืนยัน PIN</label>
       <input id="rg_pin2" type="password" inputmode="numeric" placeholder="กรอก PIN อีกครั้ง">
       <div id="rg_err" class="error-msg">${escapeHtml(errMsg || '')}</div>
-      <button class="btn gold" onclick="doRegister()">สมัครและเข้าสู่ระบบ</button>
+      <button class="btn gold" id="rg_btn" onclick="doRegister()">สมัครและเข้าสู่ระบบ</button>
       <div style="margin-top:10px;text-align:center;">
         <button class="btn outline" onclick="showLogin()">← กลับ</button>
       </div>
@@ -3391,7 +3392,7 @@ function regPhotoPreview(inp) {
   };
   r.readAsDataURL(f);
 }
-function doRegister() {
+async function doRegister() {
   const name = (byId('rg_name').value || '').trim();
   const nick = (byId('rg_nick').value || '').trim();
   const level = byId('rg_level').value;
@@ -3401,12 +3402,30 @@ function doRegister() {
   const id = (byId('rg_id').value || '').trim();
   const pin = byId('rg_pin').value;
   const pin2 = byId('rg_pin2').value;
-  const err = byId('rg_err');
+  const err = byId('rg_err'), btn = byId('rg_btn');
   if (!name) { err.textContent = 'กรุณากรอกชื่อ-สกุล'; return; }
   if (!id) { err.textContent = 'กรุณากรอกรหัสนักเรียน'; return; }
+  if (!/^[A-Za-z0-9_.\-]{2,30}$/.test(id)) { err.textContent = 'รหัสนักเรียนใช้ตัวอักษรอังกฤษ/ตัวเลข 2–30 ตัว (ไม่มีเว้นวรรค)'; return; }
   if (!/^\d{6,10}$/.test(pin)) { err.textContent = 'PIN ต้องเป็นตัวเลข 6–10 หลัก'; return; }
   if (pin !== pin2) { err.textContent = 'PIN ทั้งสองช่องไม่ตรงกัน'; return; }
   if (regFind(id)) { err.textContent = 'รหัสนักเรียนนี้มีในระบบแล้ว กรุณาตรวจสอบหรือเข้าสู่ระบบ'; return; }
+  if (apiUrl()) {
+    // สมัครเข้าระบบกลาง (ชีต) → รอครูอนุมัติ → ครูเห็นในแท็บรายชื่อ
+    err.textContent = ''; btn.disabled = true; btn.textContent = 'กำลังส่งคำขอ…';
+    try {
+      await api('registerStudent', { user_id: id, full_name: name, nickname: nick, level, room: room || level, seat_no: seat || '', pin });
+      REG_PHOTO_DATA = '';
+      render(`<div class="topbar"><div><h1>ส่งคำขอสมัครแล้ว</h1><p>บุพสิกขา สิปปานุรักษ์</p></div></div>
+        <div class="container"><div class="card" style="text-align:center;">
+          <div style="font-size:48px;">✅</div>
+          <h2>รอครูอนุมัติ</h2>
+          <p style="line-height:1.8;">ระบบได้รับคำขอของ <strong>${escapeHtml(name)}</strong> แล้ว<br>เมื่อครูอนุมัติ จะเข้าสู่ระบบได้ด้วยรหัสนักเรียน <strong>${escapeHtml(id)}</strong> และ PIN ที่ตั้งไว้</p>
+          <button class="btn gold" onclick="showLogin()">กลับไปหน้าเข้าสู่ระบบ</button>
+        </div></div>`);
+    } catch (e) { err.textContent = e.network ? 'ต้องเชื่อมต่ออินเทอร์เน็ตเพื่อสมัคร ลองใหม่อีกครั้ง' : e.message; btn.disabled = false; btn.textContent = 'สมัครและเข้าสู่ระบบ'; }
+    return;
+  }
+  // ไม่มีที่อยู่ระบบ (โหมดทดลอง): เก็บในเครื่องเหมือนเดิม
   const newStu = { student_id: id, full_name: name, nickname: nick, level, room, seat_no: seat, birthdate: birth, photo: REG_PHOTO_DATA,
     ability: { intelligence:0, speed:0, skill:0, perseverance:0, creativity:0, punctuality:0 }, rank_points: 0,
     exam_attempts: [], submissions: [], read: {}, pin, created_at: new Date().toISOString() };
@@ -3651,6 +3670,49 @@ async function pwaArchiveSubject(id) {
   catch (e) { toast(e.network ? 'ออฟไลน์ — ซ่อนรายวิชาต้องออนไลน์' : e.message, true); }
 }
 function levelHint() { return ''; }
+
+/* ---------------- นักเรียนสมัครเอง: รอครูอนุมัติ ---------------- */
+let PEND_LAST = 0;
+function pendingPanelHtml() {
+  const list = DEMO.pending || [], rooms = distinctRooms();
+  const head = `<div style="display:flex;justify-content:flex-end;margin:-4px 0 8px;"><button class="btn outline sm" style="margin:0;" onclick="pwaCheckPending(true)">↻ เช็คคำขอสมัครใหม่</button></div>`;
+  if (!list.length) return head;
+  return head + `<div class="card" style="border:1.5px solid var(--gold,#D4A82A);background:#FAF4E4;padding:12px;">
+    <div style="font-weight:700;color:var(--red);">🆕 นักเรียนสมัครใหม่ รอยืนยัน (${list.length} คน)</div>
+    <div class="meta" style="margin:4px 0 8px;line-height:1.6;">เลือกห้อง/กลุ่มแล้วกดอนุมัติ — นักเรียนจะเข้าสู่ระบบได้ด้วยรหัสและ PIN ที่ตั้งไว้ตอนสมัคร</div>
+    ${list.map(st => `<div style="padding:8px 0;border-top:1px solid var(--line);">
+      <strong>${escapeHtml(st.full_name)}</strong> <span class="meta">รหัส ${escapeHtml(st.student_id)}${st.seat_no ? ' · เลขที่ ' + escapeHtml(String(st.seat_no)) : ''}${st.nickname ? ' · ' + escapeHtml(st.nickname) : ''}</span>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">
+        <input id="pd_room_${escapeHtml(st.student_id)}" list="pd_rooms" value="${escapeHtml(st.room || '')}" placeholder="ห้อง/กลุ่ม" style="flex:1;min-width:120px;margin:0;">
+        <button class="btn gold sm" style="margin:0;" onclick="pwaApprove('${escapeHtml(st.student_id)}')">อนุมัติ</button>
+        <button class="btn red sm" style="margin:0;" onclick="pwaReject('${escapeHtml(st.student_id)}')">ปฏิเสธ</button></div></div>`).join('')}
+    <datalist id="pd_rooms">${rooms.map(r => `<option value="${escapeHtml(r)}">`).join('')}</datalist></div>`;
+}
+async function pwaApprove(id) {
+  const inp = byId('pd_room_' + id);
+  try { await api('approveStudent', { user_id: id, room: inp ? inp.value.trim() : '' }); await refreshFromServer(); toast('อนุมัติแล้ว'); renderTeacherRoster(); }
+  catch (e) { toast(e.network ? 'ออฟไลน์ — อนุมัติต้องออนไลน์' : e.message, true); }
+}
+async function pwaReject(id) {
+  if (!confirm('ปฏิเสธและลบคำขอสมัครนี้?')) return;
+  try { await api('deleteStudent', { user_id: id }); await refreshFromServer(); toast('ลบคำขอแล้ว'); renderTeacherRoster(); }
+  catch (e) { toast(e.network ? 'ออฟไลน์ — ลบต้องออนไลน์' : e.message, true); }
+}
+async function pwaCheckPending(manual) {
+  if (!manual && (Date.now() - PEND_LAST < 60000 || navigator.onLine === false)) return;
+  PEND_LAST = Date.now();
+  try {
+    const before = (DEMO.pending || []).length + '|' + DEMO.roster.length;
+    await refreshFromServer();
+    const after = (DEMO.pending || []).length + '|' + DEMO.roster.length;
+    if (manual || before !== after) { renderTeacherRoster(); if (manual) toast((DEMO.pending || []).length ? 'มีคำขอสมัครรอยืนยัน ' + DEMO.pending.length + ' คน' : 'ไม่มีคำขอสมัครใหม่'); }
+  } catch (e) { if (manual) toast(e.network ? 'ออฟไลน์' : e.message, true); }
+}
+wrap('renderTeacherRoster', function () {
+  const b = byId('teacher-body'), h = b && b.querySelector('h2'); if (!h) return;
+  h.insertAdjacentHTML('afterend', pendingPanelHtml());
+  pwaCheckPending(false);
+});
 
 /* ---------------- นำเข้าคำอธิบายรายวิชา + AI วิเคราะห์องค์ประกอบรายวิชา ---------------- */
 const COURSE_AI = { mode: '', sid: '', plan: null };
