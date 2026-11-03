@@ -3854,9 +3854,10 @@ function courseParseText(raw, level) {
   if (!found) { sec.desc = sec.head; sec.head = []; }
   const head = sec.head.join(' ') || (found ? '' : lines.join(' ')), whole = lines.join(' ');
   const cm = head.match(/(\d{4,5})\s*[-–]\s*(\d{4})/) || whole.match(/(\d{5})\s*[-–]\s*(\d{4})/);
-  const nm = (head || whole).match(/ชื่อ\s*วิชา\s*[:：]?\s*(.+?)(?=\s*ท\s*[-–—]?\s*ป\s*[-–—]?\s*น|\s*หน่วยกิต|\s*รหัส|$)/);
-  const tpn = whole.match(/ท\s*[-–—]?\s*ป\s*[-–—]?\s*น\s*[:：]?\s*\(?\s*(\d+)\s*[-–—]\s*(\d+)\s*[-–—]\s*(\d+)/);
-  const cr = whole.match(/หน่วยกิต\s*[:：]?\s*(\d+(?:\.\d+)?)/);
+  const nm = (head || whole).match(/ชื่อ\s*วิชา\s*[:：]?\s*(.+?)(?=\s*ท\s*[-–—.]*\s*ป\s*[-–—.]*\s*น|\s+\d\s*[-–—]\s*\d\s*[-–—]\s*\d|\s*หน่วยกิต|\s*รหัส|$)/);
+  const tpn = whole.match(/ท\s*[-–—.]*\s*ป\s*[-–—.]*\s*น\s*[.:：]?\s*\(?\s*(\d+)\s*[-–—]\s*(\d+)\s*[-–—]\s*(\d+)/) || (head || whole).match(/(?<![\d-])(\d)\s*[-–—]\s*(\d)\s*[-–—]\s*(\d)(?![\d-])/);
+  const cr = whole.match(/หน่วยกิต\s*[:：]?\s*(\d+(?:\.\d+)?)/) || whole.match(/(\d+(?:\.\d+)?)\s*หน่วยกิต/);
+  const hw = whole.match(/(\d+)\s*(?:ชั่วโมง|ชม\.?)\s*(?:\/|ต่อ)\s*(?:สัปดาห์|สัปดาห|week)/);
   const theory = tpn ? Number(tpn[1]) : null, prac = tpn ? Number(tpn[2]) : null;
   const credit = tpn ? Number(tpn[3]) : (cr ? Number(cr[1]) : null);
   const lv = /ปวส/.test(whole) ? 'ปวส.' : /ปวช/.test(whole) ? 'ปวช.' : /มัธยม/.test(whole) ? 'มัธยม' : /ระยะสั้น/.test(whole) ? 'ระยะสั้น' : '';
@@ -3872,9 +3873,17 @@ function courseParseText(raw, level) {
   }
   if (topics.length > 10) topics = topics.slice(0, 9).concat([topics.slice(9).join(' และ')]);
   const units = topics.map(caiMakeUnit);
-  const hpw = (theory || prac) ? (theory || 0) + (prac || 0) : null;
+  const hpw = (theory || prac) ? (theory || 0) + (prac || 0) : (hw ? Number(hw[1]) : null);
+  // ชื่อวิชา: ถ้าไม่พบแบบมีป้ายกำกับ ลองหาจากบรรทัดรหัสวิชา / บรรทัดถัดจากป้าย / หัวข้อที่ซ้ำในจุดประสงค์
+  let name = nm ? caiStr(caiThaiJoin(nm[1]), 150) : '';
+  if (!name) {
+    const li = lines.findIndex(l => /\d{4,5}\s*[-–]\s*\d{4}/.test(l));
+    if (li >= 0) { const t = caiThaiJoin(lines[li].replace(/.*?\d{4,5}\s*[-–]\s*\d{4}/, '').replace(/ชื่อ\s*วิชา\s*[:：]?/, '').replace(/ท\s*[-–—.]*\s*ป.*$|\s\d\s*[-–—]\s*\d\s*[-–—]\s*\d.*$|หน่วยกิต.*$/, '')); if (/[\u0E00-\u0E7F]{3}/.test(t)) name = caiStr(t, 150); }
+    if (!name) { const k = lines.findIndex(l => /^ชื่อ\s*วิชา\s*[:：]?$/.test(l)); if (k >= 0 && lines[k + 1]) name = caiStr(caiThaiJoin(lines[k + 1]), 150); }
+    if (!name) { const m = [].concat(objectives, competencies).join(' ').match(/ออกแบบ\s*([\u0E00-\u0E7F]{4,40}?)(?=\s|ประเภท|ด้วย|ใน|ตาม|$)/); if (m) name = 'การออกแบบ' + m[1]; }
+  }
   if (!units.length && !descLines.length && !objectives.length) throw new Error('อ่านไม่พบเนื้อหารายวิชาในข้อความ — ตรวจว่ามีหัวข้อ "คำอธิบายรายวิชา" หรือลองแนบรูปที่ชัดขึ้น');
-  const plan = { subject: { code: cm ? cm[1] + '-' + cm[2] : '', name: nm ? caiStr(caiThaiJoin(nm[1]), 150) : '', level: lv, credit: credit && credit > 0 ? credit : null, hours_per_week: hpw, theory, prac },
+  const plan = { subject: { code: cm ? cm[1] + '-' + cm[2] : '', name, level: lv, credit: credit && credit > 0 ? credit : null, hours_per_week: hpw, theory, prac },
     description: caiStr(descLines.join(' '), 1500), objectives, competencies, units, level: lv || level || 'ปวช.' };
   caiRegroup(plan);
   return plan;
@@ -4014,6 +4023,8 @@ async function courseAiRun() {
     COURSE_AI.plan = plan;
     if (COURSE_AI.mode === 'new') courseAiFillForm(plan);
     byId('cai_result').innerHTML = courseAiResultHtml(plan, s);
+    const miss = [!plan.subject.code && 'รหัสวิชา', !plan.subject.name && 'ชื่อวิชา', !plan.subject.credit && 'หน่วยกิต', !plan.subject.hours_per_week && 'ชั่วโมง/สัปดาห์'].filter(Boolean);
+    if (miss.length) setTimeout(() => caiStatus('อ่านไม่พบ: ' + miss.join(', ') + ' (ในรูป/ข้อความไม่มี หรืออ่านเพี้ยน) — กรอกเองในฟอร์ม หรือแก้ข้อความในช่องด้านบนแล้วกดวิเคราะห์ซ้ำ', true), 50);
     caiStatus((imgs.length ? 'อ่านรูปแล้ว (ข้อความอยู่ในช่องด้านบน แก้คำผิดแล้วกดวิเคราะห์ซ้ำได้) · ' : '') + (COURSE_AI.mode === 'new' ? 'วิเคราะห์เสร็จแล้ว — เติมข้อมูลลงฟอร์มด้านล่างให้แล้ว ตรวจแล้วกด "เพิ่มรายวิชา" ท้ายฟอร์ม' : 'วิเคราะห์เสร็จแล้ว — ตรวจ/แก้รายการด้านล่างแล้วกดนำไปใช้'));
   } catch (e) { caiStatus(e.message, true); }
   btn.disabled = false;
