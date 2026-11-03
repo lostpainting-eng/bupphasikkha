@@ -3623,7 +3623,7 @@ wrap('openSubjectDetail', function (id) {
       <button class="btn outline sm" onclick="pwaSaveSubjectSchedule('${id}')">บันทึกตาราง</button>
       <span id="sched_ok_${id}" style="color:var(--green,#4a7c3f);font-size:calc(13px * var(--fs));"></span>
     </div>
-    <button class="btn outline sm" style="margin-top:8px;" onclick="courseAiOpen('existing','${id}')">✨ นำเข้าคำอธิบายรายวิชา (AI สร้างหน่วยการเรียนรู้/ชิ้นงาน/คะแนน)</button><div id="cai_box"></div>
+    <button class="btn outline sm" style="margin-top:8px;" onclick="courseAiOpen('existing','${id}')">🔍 นำเข้าคำอธิบายรายวิชา (วิเคราะห์อัตโนมัติ: หน่วยการเรียนรู้/ชิ้นงาน/คะแนน)</button><div id="cai_box"></div>
     <button class="btn outline sm" style="margin-top:8px;" onclick="planOpen('${id}','plan_box')">📅 แผนการจัดการเรียนรู้ → ตั้งสมรรถนะและคะแนน</button><div id="plan_box"></div>
     <button class="btn outline sm" id="arch_btn" style="margin-top:8px;" onclick="pwaArchiveSubject('${id}')">ซ่อนรายวิชานี้</button></div>`);
 });
@@ -3688,7 +3688,7 @@ async function caiAddImages(p, files) {
   }
   caiRenderThumbs(p);
   if (skipped) caiMsg(p, 'แนบได้สูงสุด 4 รูป — ข้ามรูปที่เกิน ' + skipped + ' รูป', true);
-  else caiMsg(p, 'แนบรูปแล้ว ' + CAI_IMGS[p].length + ' รูป — กดวิเคราะห์ได้เลย (AI จะอ่านข้อความจากรูปด้วย)');
+  else caiMsg(p, 'แนบรูปแล้ว ' + CAI_IMGS[p].length + (p === 'cai' ? ' รูป — กดวิเคราะห์ได้เลย (ระบบจะอ่านข้อความจากรูปให้อัตโนมัติ)' : ' รูป — กดวิเคราะห์ได้เลย (AI จะอ่านข้อความจากรูปด้วย)'));
   const inp = byId(p + '_img'); if (inp) inp.value = '';
 }
 function caiRenderThumbs(p) {
@@ -3740,37 +3740,12 @@ async function aiText(prompt, images) {
   if (!text.trim()) throw new Error('AI ไม่ได้ตอบกลับ ลองใหม่อีกครั้ง');
   return text;
 }
+const CAI_IMG_NOTE = '\nมีรูปภาพแนบมาด้วย (แคปจากหลักสูตร/เอกสาร) ให้อ่านข้อความในรูปทุกรูป (OCR) แล้วรวมกับข้อความด้านล่างเป็นข้อมูลเดียวกัน ถ้าอ่านตรงไหนไม่ชัดให้ข้าม ห้ามเดา\n';
 function parseAiJson(t) {
   t = String(t || '');
   const a = t.indexOf('{'), b = t.lastIndexOf('}');
   if (a < 0 || b < a) throw new Error('AI ตอบกลับไม่อยู่ในรูปแบบที่ใช้ได้ ลองใหม่อีกครั้ง');
   try { return JSON.parse(t.slice(a, b + 1)); } catch (e) { throw new Error('AI ตอบกลับไม่อยู่ในรูปแบบที่ใช้ได้ ลองใหม่อีกครั้ง'); }
-}
-
-const CAI_IMG_NOTE = '\nมีรูปภาพแนบมาด้วย (แคปจากหลักสูตร/เอกสาร) ให้อ่านข้อความในรูปทุกรูป (OCR) แล้วรวมกับข้อความด้านล่างเป็นข้อมูลเดียวกัน ถ้าอ่านตรงไหนไม่ชัดให้ข้าม ห้ามเดา\n';
-function courseAiPrompt(text, level, nImg) {
-  const slots = rptSlots({ level });
-  return `คุณเป็นผู้เชี่ยวชาญด้านหลักสูตรอาชีวศึกษาและงานจิตรกรรมไทย ช่วยวิเคราะห์ "คำอธิบายรายวิชา" ด้านล่าง แล้วสร้างองค์ประกอบรายวิชาให้ครูผู้สอนนำไปใช้
-ตอบเป็น JSON เท่านั้น (ห้ามมีข้อความนอก JSON) เป็นภาษาไทย ตามโครงสร้างนี้:
-{
- "subject": { "code": "รหัสวิชา หรือ null", "name": "ชื่อวิชา", "level": "ปวช. | มัธยม | ระยะสั้น", "credit": 0 หรือ null, "theory_hours": 0 หรือ null, "practice_hours": 0 หรือ null, "hours_per_week": 0 หรือ null },
- "description": "คำอธิบายรายวิชาเรียบเรียงให้กระชับ ไม่เกิน 6 บรรทัด",
- "objectives": ["จุดประสงค์รายวิชา/สมรรถนะรายวิชา แต่ละข้อ"],
- "units": [ { "title": "ชื่อหน่วยการเรียนรู้", "hours": 0 หรือ null, "topics": ["หัวข้อเนื้อหาย่อย"], "assignment": { "title": "ชื่อชิ้นงานปฏิบัติ", "description": "โจทย์/สิ่งที่ต้องส่ง", "rubric": [ { "name": "เกณฑ์ให้คะแนน", "max": 10 } ] } } ],
- "score_groups": [ { "unit": "ชื่อสมรรถนะ/หน่วยที่ใช้วัดผล", "items": [ { "name": "รายการวัดผล", "max": 5 } ] } ]
-}
-กติกา:
-- ยึดเนื้อหาจากข้อความที่ให้เป็นหลัก ห้ามแต่งรหัสวิชา หน่วยกิต หรือชั่วโมงที่ไม่มีในข้อความ (ไม่มีให้ใส่ null) hours_per_week คือชั่วโมงเรียนต่อสัปดาห์ (ทฤษฎี+ปฏิบัติ) ถ้าไม่ระบุให้ null
-- level ใช้ได้เฉพาะ "ปวช." "มัธยม" "ระยะสั้น" (ปวส. ให้ใช้ "ปวช.") ถ้าข้อความไม่ระบุให้ใช้ "${level}"
-- units 4–8 หน่วย เรียงตามลำดับการสอน ชื่อหน่วยสั้นกระชับ ผลรวม hours ใกล้เคียงชั่วโมงรวมของวิชา (ถ้ามีข้อมูล)
-- ทุกหน่วยมี assignment เป็นชิ้นงานปฏิบัติที่ทำได้จริงในห้องเรียน rubric 3–4 ข้อ คะแนนเต็มรวมประมาณ 30
-- score_groups ต้องมี 5 กลุ่มพอดี (5 สมรรถนะ เรียงตามลำดับการสอน) แต่ละกลุ่มรวมหน่วยที่เกี่ยวข้อง จำนวน items สูงสุดของกลุ่มที่ 1–5 คือ ${slots.join(', ')} ตามลำดับ และผลรวม max ของทุก item ทุกกลุ่ม = 70 พอดี
-
-${nImg ? CAI_IMG_NOTE : ''}
-คำอธิบายรายวิชา:
-"""
-${text.slice(0, 20000) || '(ไม่มีข้อความ ใช้ข้อมูลจากรูปที่แนบ)'}
-"""`;
 }
 
 /* ---- ปรับผลจาก AI ให้ตรงกับโครงสร้างที่แอปใช้ ---- */
@@ -3797,33 +3772,112 @@ function caiGroupsFromUnits(units) {
   }
   return out;
 }
-function courseAiNormalize(raw, level) {
-  raw = raw || {};
-  const sj = raw.subject || {};
-  const lv = ['ปวช.', 'มัธยม', 'ระยะสั้น'].includes(caiStr(sj.level)) ? caiStr(sj.level) : '';
-  const theory = caiNum(sj.theory_hours), prac = caiNum(sj.practice_hours);
-  let hpw = caiNum(sj.hours_per_week); if (!hpw && (theory || prac)) hpw = (theory || 0) + (prac || 0);
-  const units = (Array.isArray(raw.units) ? raw.units : []).slice(0, 10).map((u, i) => {
-    const a = u && u.assignment;
-    const rubric = a && Array.isArray(a.rubric) ? a.rubric.map(r => ({ name: caiStr(r && r.name, 80) || 'เกณฑ์', max: Math.max(1, Math.round(caiNum(r && r.max) || 5)) })).slice(0, 6) : [];
-    return { title: caiStr(u && u.title, 120) || ('หน่วยที่ ' + (i + 1)), hours: caiNum(u && u.hours), topics: caiList(u && u.topics, 10),
-      assignment: a && caiStr(a.title, 120) ? { title: caiStr(a.title, 120), description: caiStr(a.description, 600),
-        rubric: rubric.length ? rubric : [{ name: 'ความถูกต้องตามแบบแผน', max: 15 }, { name: 'ความประณีต', max: 10 }, { name: 'ความสมบูรณ์ของผลงาน', max: 5 }] } : null };
+/* ---- วิเคราะห์ข้อความอัตโนมัติ (ไม่ใช้ AI): อ่านรูปด้วย OCR แล้วแยกหัวข้อตามรูปแบบคำอธิบายรายวิชา ---- */
+const CAI_PRACT_RE = /(จิตรกรรม|ประติมากรรม|ลาย|วาด|ปั้น|ลงสี|ระบาย|ปฏิบัติ|สร้างสรรค์|ออกแบบ|ฝึก|ผลิต|ประดิษฐ์|แกะ|เขียน|นำเสนอ|ประณีต|สถาปัตยกรรม|บรรยาย)/;
+const CAI_SECS = [['obj', 'จุดประสงค์รายวิชา'], ['comp', 'สมรรถนะรายวิชา'], ['desc', 'คำอธิบายรายวิชา'], ['skip', 'มาตรฐานรายวิชา'], ['skip', 'มาตรฐานการเรียนรู้'], ['obj', 'จุดประสงค์'], ['comp', 'สมรรถนะ'], ['desc', 'คำอธิบาย']]
+  .map(a => [a[0], new RegExp('^' + a[1].split('').join('\\s*'))]);
+function caiTidy(t) {
+  return String(t || '').replace(/ํา/g, 'ำ')
+    .replace(/[ \t ]+([ะาำัิ-ฺ็-๎])/g, '$1')
+    .replace(/([เ-ไ])[ \t]+(?=[ก-ฮ])/g, '$1');
+}
+function caiThaiJoin(s) { return String(s || '').replace(/([฀-๿])\s+(?=[฀-๿])/g, '$1').trim(); }
+// ประกอบข้อความจากผล OCR ของ Tesseract: เติมช่องว่างตามระยะห่างจริงระหว่างคำ (Tesseract ใส่ช่องว่างระหว่างตัวอักษรไทยทุกตัว)
+function caiOcrText(data) {
+  const TH = /[฀-๿]/, L = [];
+  if (data.lines && data.lines.length) data.lines.forEach(l => L.push(l));
+  else (data.blocks || []).forEach(b => (b.paragraphs || []).forEach(p => (p.lines || []).forEach(l => L.push(l))));
+  const out = [];
+  L.forEach(l => {
+    const ws = (l.words || []).filter(w => w.text && w.text.trim());
+    if (!ws.length) return;
+    const h = Math.max(8, l.bbox.y1 - l.bbox.y0); let s = '';
+    ws.forEach((w, i) => {
+      const t = w.text.trim();
+      if (i) {
+        const gap = w.bbox.x0 - ws[i - 1].bbox.x1, a = ws[i - 1].text.trim().slice(-1), b = t[0], bothTh = TH.test(a) && TH.test(b);
+        if (gap > h * 0.3 || (!bothTh && gap > h * 0.15)) s += ' ';
+      }
+      s += t;
+    });
+    out.push(s);
   });
-  const slots = rptSlots({ level: lv || level });
-  let groups = (Array.isArray(raw.score_groups) ? raw.score_groups : []).map(g => ({ unit: caiStr(g && g.unit, 120),
-    items: (Array.isArray(g && g.items) ? g.items : []).map(it => ({ name: caiStr(it && it.name, 80), max: Math.max(1, Math.round(caiNum(it && it.max) || 1)) })).filter(it => it.name) }));
-  if (groups.length !== 5 || groups.some(g => !g.unit || !g.items.length)) groups = caiGroupsFromUnits(units);
-  groups = groups.map((g, i) => ({ unit: g.unit, items: g.items.slice(0, slots[i]) }));
-  caiScaleTo70(groups);
-  if (!units.length && !raw.description) throw new Error('AI วิเคราะห์ไม่พบเนื้อหารายวิชา ลองวางคำอธิบายให้ละเอียดขึ้น');
-  return { subject: { code: caiStr(sj.code, 40), name: caiStr(sj.name, 150), level: lv, credit: caiNum(sj.credit), hours_per_week: hpw, theory, prac },
-    description: caiStr(raw.description, 1500), objectives: caiList(raw.objectives, 12, 300), units, groups };
+  return out.length ? out.join('\n') : caiTidy(String(data.text || '').replace(/([฀-๿]) (?=[฀-๿])/g, '$1'));
+}
+function caiItems(lines) {
+  const items = [], lead = [];
+  lines.forEach(l => {
+    const m = l.match(/^(?:\d{1,2}\s*[.)]\s*|\d{1,2}\s+(?=[฀-๿])|[•·\-–]\s*)(.*)$/);
+    if (m) items.push(m[1]); else if (items.length) items[items.length - 1] += ' ' + l; else lead.push(l);
+  });
+  if (!items.length) { const j = lead.join(' ').trim(); if (j.length > 25 && !/^เพื่อ(ให้)?$/.test(j)) items.push(j); }
+  return items.map(x => caiStr(x, 300)).filter(x => x.length > 3);
+}
+// แยกหัวข้อเนื้อหาจากย่อหน้าคำอธิบายรายวิชา (คั่นด้วยเว้นวรรคตามแบบหลักสูตร)
+function caiTopics(lines) {
+  const toks = [];
+  lines.forEach((l, li) => l.split(/\s+/).filter(Boolean).forEach((w, wi) => {
+    if (li > 0 && wi === 0 && toks.length) toks[toks.length - 1] += w; else toks.push(w);   // ขึ้นบรรทัดใหม่กลางประโยค → ต่อกับคำก่อนหน้า
+  }));
+  const PRE = /^(?:ศึกษา|วิเคราะห์|ปฏิบัติ|ฝึก|เรียนรู้|และ|หรือ|เกี่ยวกับ|เรื่อง|ในเรื่อง|ที่เกี่ยวกับ)+/;
+  if (toks.length) { const t0 = toks[0].replace(PRE, ''); if (t0) toks[0] = t0; else toks.shift(); }
+  while (toks.length && /^(?:ศึกษา|วิเคราะห์|ปฏิบัติ|ฝึก|และ|หรือ|เกี่ยวกับ|เรื่อง|ในเรื่อง|ที่เกี่ยวกับ)+$/.test(toks[0])) { toks.shift(); if (toks.length) toks[0] = toks[0].replace(PRE, '') || toks[0]; }
+  let parts = toks;
+  if (parts.length < 3) parts = toks.join(' ').split(/\s*[,;、]\s*|\s+และ\s*|(?<=\S)และ(?=[ก-ฮ]{4})/).filter(Boolean);
+  const out = [];
+  parts.forEach(p => {
+    p = p.replace(/[.\s]*ฯลฯ[.\s]*$/, '').replace(/^[,.;\s]+|[,.;\s]+$/g, '');
+    if (!p) return;
+    const prev = out[out.length - 1];
+    if (prev && (p.length <= 4 || /^(?:และ|หรือ|ของ|ใน|ต่อ|กับ)/.test(p) || /(?:และ|หรือ|ของ|ใน|แห่ง|แหล่ง|ต่อ|กับ|สู่)$/.test(prev))) out[out.length - 1] = prev + p;
+    else out.push(p);
+  });
+  const seen = {}; return out.filter(t => { const k = t.replace(/\s+/g, ''); if (seen[k]) return false; seen[k] = 1; return true; });
+}
+function caiMakeUnit(title) {
+  title = caiStr(title, 120);
+  return { title, hours: null, topics: [], assignment: { title: 'ชิ้นงาน: ' + title.slice(0, 80), description: 'ปฏิบัติ/นำเสนอผลงานตามหัวข้อ "' + title + '"', auto: true,
+    rubric: [{ name: 'ความถูกต้องตามแบบแผน', max: 15 }, { name: 'ความประณีต', max: 10 }, { name: 'ความสมบูรณ์ของผลงาน', max: 5 }] }, pick: CAI_PRACT_RE.test(title) };
+}
+function caiRegroup(plan) {
+  const slots = rptSlots({ level: plan.level || '' });
+  plan.groups = plan.units.length ? planBuildComps({ units: plan.units.map(u => ({ name: u.title, hours: u.hours, topics: u.topics || [] })) }, slots) : [];
+}
+function courseParseText(raw, level) {
+  const text = caiTidy(raw);
+  const lines = text.split(/\r?\n/).map(l => l.replace(/[ \t ]+/g, ' ').trim()).filter(Boolean);
+  const sec = { head: [], obj: [], comp: [], desc: [], skip: [] }; let cur = 'head', found = false;
+  lines.forEach(l => {
+    for (const [k, rx] of CAI_SECS) { if (rx.test(l)) { cur = k; found = true; const rest = l.replace(rx, '').trim(); if (rest) sec[cur].push(rest); return; } }
+    sec[cur].push(l);
+  });
+  if (!found) { sec.desc = sec.head; sec.head = []; }
+  const head = sec.head.join(' ') || (found ? '' : lines.join(' ')), whole = lines.join(' ');
+  const cm = head.match(/(\d{4,5})\s*[-–]\s*(\d{4})/) || whole.match(/(\d{5})\s*[-–]\s*(\d{4})/);
+  const nm = (head || whole).match(/ชื่อ\s*วิชา\s*[:：]?\s*(.+?)(?=\s*ท\s*[-–—]?\s*ป\s*[-–—]?\s*น|\s*หน่วยกิต|\s*รหัส|$)/);
+  const tpn = whole.match(/ท\s*[-–—]?\s*ป\s*[-–—]?\s*น\s*[:：]?\s*\(?\s*(\d+)\s*[-–—]\s*(\d+)\s*[-–—]\s*(\d+)/);
+  const cr = whole.match(/หน่วยกิต\s*[:：]?\s*(\d+(?:\.\d+)?)/);
+  const theory = tpn ? Number(tpn[1]) : null, prac = tpn ? Number(tpn[2]) : null;
+  const credit = tpn ? Number(tpn[3]) : (cr ? Number(cr[1]) : null);
+  const lv = /ปวส/.test(whole) ? 'ปวส.' : /ปวช/.test(whole) ? 'ปวช.' : /มัธยม/.test(whole) ? 'มัธยม' : /ระยะสั้น/.test(whole) ? 'ระยะสั้น' : '';
+  const descLines = sec.desc.filter(l => !/^(?:รหัส\s*วิชา|ชื่อ\s*วิชา)/.test(l));
+  let topics = caiTopics(descLines);
+  const objectives = caiItems(sec.obj), competencies = caiItems(sec.comp);
+  if (!topics.length) topics = (competencies.length ? competencies : objectives).slice(0, 8).map(x => x.replace(/^(?:แสดง|อธิบาย|เข้าใจ|สามารถ)\s*/, ''));
+  if (topics.length > 10) topics = topics.slice(0, 9).concat([topics.slice(9).join(' และ')]);
+  const units = topics.map(caiMakeUnit);
+  const hpw = (theory || prac) ? (theory || 0) + (prac || 0) : null;
+  if (!units.length && !descLines.length && !objectives.length) throw new Error('อ่านไม่พบเนื้อหารายวิชาในข้อความ — ตรวจว่ามีหัวข้อ "คำอธิบายรายวิชา" หรือลองแนบรูปที่ชัดขึ้น');
+  const plan = { subject: { code: cm ? cm[1] + '-' + cm[2] : '', name: nm ? caiStr(caiThaiJoin(nm[1]), 150) : '', level: lv, credit: credit && credit > 0 ? credit : null, hours_per_week: hpw, theory, prac },
+    description: caiStr(descLines.join(' '), 1500), objectives, competencies, units, level: lv || level || 'ปวช.' };
+  caiRegroup(plan);
+  return plan;
 }
 function courseAiDescription(plan) {
   const parts = [];
   if (plan.description) parts.push(plan.description);
   if (plan.objectives.length) parts.push('จุดประสงค์รายวิชา\n' + plan.objectives.map((o, i) => (i + 1) + '. ' + o).join('\n'));
+  if ((plan.competencies || []).length) parts.push('สมรรถนะรายวิชา\n' + plan.competencies.map((o, i) => (i + 1) + '. ' + o).join('\n'));
   if (plan.units.length) parts.push('หน่วยการเรียนรู้\n' + plan.units.map((u, i) => (i + 1) + '. ' + u.title + (u.hours ? ' (' + u.hours + ' ชม.)' : '')).join('\n'));
   return parts.join('\n\n');
 }
@@ -3832,17 +3886,15 @@ function courseAiDescription(plan) {
 function caiStatus(msg, bad) { const el = byId('cai_status'); if (el) { el.textContent = msg || ''; el.style.color = bad ? '#B3261E' : ''; } }
 function courseAiPanelHtml() {
   return `<div style="margin:8px 0 12px;padding:12px;border:1.5px solid var(--gold,#D4A82A);border-radius:12px;background:#FAF4E4;">
-    <div style="font-weight:700;color:var(--red);">✨ นำเข้าคำอธิบายรายวิชา — ให้ AI วิเคราะห์</div>
-    <div class="meta" style="line-height:1.7;margin:4px 0 8px;">วางคำอธิบายรายวิชา/หลักสูตร เลือกไฟล์ .docx / .txt หรือแนบรูปแคปจากหลักสูตร AI จะแยกหน่วยการเรียนรู้ จุดประสงค์ ชิ้นงานพร้อมเกณฑ์ และโครงสร้างคะแนน 5 สมรรถนะ ให้ครูตรวจก่อนนำไปใช้</div>
+    <div style="font-weight:700;color:var(--red);">🔍 นำเข้าคำอธิบายรายวิชา — วิเคราะห์อัตโนมัติ</div>
+    <div class="meta" style="line-height:1.7;margin:4px 0 8px;">วางคำอธิบายรายวิชา/หลักสูตร เลือกไฟล์ .docx / .txt หรือแนบรูปแคปจากหลักสูตร ระบบจะอ่านตัวอักษรจากรูปให้เอง แล้วแยกรหัส ชื่อวิชา ท-ป-น จุดประสงค์ สมรรถนะ และหัวข้อเนื้อหาเป็นหน่วยการเรียนรู้ พร้อมจัดโครงสร้างคะแนน 5 สมรรถนะ (ไม่ใช้ AI ไม่ต้องมีคีย์) ผลเป็นการแยกตามรูปแบบหลักสูตร อาจคลาดเคลื่อนได้ ให้ครูตรวจ/แก้ชื่อหน่วยก่อนนำไปใช้</div>
     <input type="file" id="cai_file" accept=".docx,.txt,.md,text/plain" onchange="courseAiFile(this)">
-    <textarea id="cai_text" rows="8" onpaste="caiPaste(event,'cai')" placeholder="วางคำอธิบายรายวิชาที่นี่ เช่น รหัสวิชา ชื่อวิชา ท-ป-น จุดประสงค์รายวิชา สมรรถนะรายวิชา คำอธิบายรายวิชา (หรือแนบรูปแคปหลักสูตรด้านล่าง / วางรูปลงช่องนี้ได้)"></textarea>
+    <textarea id="cai_text" rows="8" onpaste="caiPaste(event,'cai')" placeholder="วางคำอธิบายรายวิชาที่นี่ เช่น รหัสวิชา ชื่อวิชา ท-ป-น จุดประสงค์รายวิชา สมรรถนะรายวิชา คำอธิบายรายวิชา (หรือแนบรูปแคปหลักสูตรด้านล่าง / วางรูปลงช่องนี้ได้ — ข้อความที่อ่านจากรูปจะถูกใส่ในช่องนี้ให้แก้ได้)"></textarea>
     ${caiImgBlockHtml('cai')}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-      <button class="btn gold sm" id="cai_btn" style="margin:0;" onclick="courseAiRun()">✨ วิเคราะห์ด้วย AI</button>
-      <button class="btn outline sm" style="margin:0;" onclick="courseAiSettingsToggle()">⚙ ตั้งค่า AI${aiCfg().key ? ' ✓' : ''}</button>
+      <button class="btn gold sm" id="cai_btn" style="margin:0;" onclick="courseAiRun()">🔍 วิเคราะห์</button>
       <button class="btn outline sm" style="margin:0;" onclick="courseAiClose()">ปิด</button></div>
     <div id="cai_status" class="meta" style="margin-top:6px;line-height:1.6;"></div>
-    <div id="cai_settings" style="display:none;"></div>
     <div id="cai_result"></div></div>`;
 }
 function courseAiSettingsHtml() {
@@ -3876,12 +3928,11 @@ function courseAiOpen(mode, sid) {
   box.innerHTML = courseAiPanelHtml();
   const s = sid ? findSubject(sid) : null;
   byId('cai_text').value = s ? (s.description || '') : (byId('new_desc') ? byId('new_desc').value : '');
-  if (!aiCfg().key) { caiStatus('ครั้งแรกต้องตั้งค่า AI (วางคีย์) ก่อนกดวิเคราะห์'); courseAiSettingsToggle(true); }
 }
 function courseAiClose() { const box = byId('cai_box'); if (box) box.innerHTML = ''; COURSE_AI.plan = null; COURSE_AI.mode = ''; CAI_IMGS.cai = []; }
 function courseAiInjectNew() {
   const first = byId('new_code'); if (!first || !first.previousElementSibling) return;
-  first.previousElementSibling.insertAdjacentHTML('beforebegin', `<button class="btn outline" style="margin:0 0 8px;width:100%;" onclick="courseAiOpen('new')">✨ นำเข้าคำอธิบายรายวิชา — ให้ AI สร้างหน่วยการเรียนรู้ / ชิ้นงาน / โครงสร้างคะแนน</button><div id="cai_box"></div>`);
+  first.previousElementSibling.insertAdjacentHTML('beforebegin', `<button class="btn outline" style="margin:0 0 8px;width:100%;" onclick="courseAiOpen('new')">🔍 นำเข้าคำอธิบายรายวิชา — สร้างหน่วยการเรียนรู้ / ชิ้นงาน / โครงสร้างคะแนนอัตโนมัติ</button><div id="cai_box"></div>`);
 }
 async function courseAiFile(inp) {
   const f = inp.files && inp.files[0]; if (!f) return;
@@ -3911,46 +3962,103 @@ function caiHasScores(s) {
   const r = s && s.report; if (!r || !r.scores) return false;
   return Object.keys(r.scores).some(k => ((r.scores[k] || {}).c || []).some(a => (a || []).some(v => v !== '' && v != null)));
 }
+function caiLoadOcr() {
+  return new Promise((res, rej) => {
+    if (window.Tesseract) return res();
+    const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+    s.onload = res; s.onerror = () => rej(new Error('โหลดตัวอ่านตัวอักษรจากรูปไม่ได้ (ต้องออนไลน์) — พิมพ์/วางข้อความแทนได้')); document.head.appendChild(s);
+  });
+}
+function caiOcrCanvas(src) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      const m = Math.max(img.width, img.height), sc = m < 1500 ? Math.min(2.5, 1800 / m) : 1, c = document.createElement('canvas');
+      c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height); res(c);
+    };
+    img.onerror = () => rej(new Error('เปิดรูปไม่ได้')); img.src = src;
+  });
+}
+async function caiOcrImages(imgs, onStatus) {
+  await caiLoadOcr();
+  let cur = 0; const n = imgs.length, out = [];
+  onStatus('กำลังเตรียมตัวอ่านภาษาไทย (ครั้งแรกต้องโหลดข้อมูลภาษา อาจใช้เวลาสักครู่) …');
+  const worker = await Tesseract.createWorker('tha', 1, { logger: m => { if (m && m.status === 'recognizing text') onStatus('กำลังอ่านรูปที่ ' + (cur + 1) + '/' + n + ' … ' + Math.round((m.progress || 0) * 100) + '%'); } });
+  try {
+    for (; cur < n; cur++) { const r = await worker.recognize(await caiOcrCanvas(imgs[cur].src), {}, { blocks: true, text: true }); out.push(caiOcrText(r.data)); }
+  } finally { try { await worker.terminate(); } catch (e) {} }
+  return out.join('\n');
+}
 async function courseAiRun() {
-  const text = byId('cai_text').value.trim(), btn = byId('cai_btn');
+  const ta = byId('cai_text'), btn = byId('cai_btn');
   const imgs = CAI_IMGS.cai.slice();
-  if (text.length < 20 && !imgs.length) { caiStatus('วางคำอธิบายรายวิชา หรือแนบรูปภาพก่อน', true); return; }
+  if (ta.value.trim().length < 20 && !imgs.length) { caiStatus('วางคำอธิบายรายวิชา หรือแนบรูปภาพก่อน', true); return; }
   const s = COURSE_AI.sid ? findSubject(COURSE_AI.sid) : null;
   const level = s ? s.level : (byId('new_level') ? byId('new_level').value : 'ปวช.');
-  btn.disabled = true; byId('cai_result').innerHTML = ''; caiStatus(imgs.length ? 'AI กำลังอ่านรูปและวิเคราะห์… (ประมาณ 20–60 วินาที)' : 'AI กำลังวิเคราะห์… (ประมาณ 10–40 วินาที)');
+  btn.disabled = true; byId('cai_result').innerHTML = '';
   try {
-    const plan = courseAiNormalize(parseAiJson(await aiText(courseAiPrompt(text, level, imgs.length), imgs)), level);
+    if (imgs.length) {
+      const t = await caiOcrImages(imgs, m => caiStatus(m));
+      if (t.replace(/\s+/g, '').length < 10) throw new Error('อ่านตัวอักษรจากรูปไม่ได้ — ลองรูปที่ชัด/ใหญ่ขึ้น หรือพิมพ์ข้อความแทน');
+      ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + t.trim();
+      CAI_IMGS.cai = []; caiRenderThumbs('cai');
+    }
+    const plan = courseParseText(ta.value, level);
     COURSE_AI.plan = plan;
     if (COURSE_AI.mode === 'new') courseAiFillForm(plan);
     byId('cai_result').innerHTML = courseAiResultHtml(plan, s);
-    caiStatus(COURSE_AI.mode === 'new' ? 'วิเคราะห์เสร็จแล้ว — เติมข้อมูลลงฟอร์มด้านล่างให้แล้ว ตรวจแล้วกด "เพิ่มรายวิชา" ท้ายฟอร์ม' : 'วิเคราะห์เสร็จแล้ว — ตรวจรายการด้านล่างแล้วกดนำไปใช้');
-  } catch (e) {
-    if (e.code === 'nokey') { caiStatus('ยังไม่ได้ตั้งค่าคีย์ AI — วางคีย์ในช่องด้านล่างแล้วกดบันทึก', true); courseAiSettingsToggle(true); }
-    else caiStatus(e.message, true);
-  }
+    caiStatus((imgs.length ? 'อ่านรูปแล้ว (ข้อความอยู่ในช่องด้านบน แก้คำผิดแล้วกดวิเคราะห์ซ้ำได้) · ' : '') + (COURSE_AI.mode === 'new' ? 'วิเคราะห์เสร็จแล้ว — เติมข้อมูลลงฟอร์มด้านล่างให้แล้ว ตรวจแล้วกด "เพิ่มรายวิชา" ท้ายฟอร์ม' : 'วิเคราะห์เสร็จแล้ว — ตรวจ/แก้รายการด้านล่างแล้วกดนำไปใช้'));
+  } catch (e) { caiStatus(e.message, true); }
   btn.disabled = false;
 }
 function courseAiFillForm(plan) {
   const sj = plan.subject, set = (id, v) => { const el = byId(id); if (el && v != null && v !== '') el.value = v; };
   set('new_code', sj.code); set('new_name', sj.name); set('new_level', sj.level); set('new_credit', sj.credit); set('new_hpw', sj.hours_per_week); set('new_desc', courseAiDescription(plan));
 }
+function caiGroupsHtml(plan) {
+  return plan.groups.length ? plan.groups.map((g, i) => `<div class="meta" style="line-height:1.7;"><strong style="color:var(--black);">ส.${i + 1} ${escapeHtml(g.unit)}</strong> — ${g.items.map(it => escapeHtml(it.name) + ' ' + it.max).join(' · ')} <span class="badge">${g.items.reduce((a, it) => a + it.max, 0)}</span></div>`).join('') : '<div class="meta">เพิ่มหน่วยการเรียนรู้ก่อน ระบบจึงจะจัดโครงสร้างคะแนนให้</div>';
+}
+function caiUnitsHtml(plan) {
+  return plan.units.map((u, i) => `<div style="display:flex;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);">
+      <input type="checkbox" class="cai_u" data-i="${i}" ${u.pick !== false ? 'checked' : ''} onchange="caiUnitPick(${i},this.checked)" style="width:auto;margin:0;" title="สร้างชิ้นงานของหน่วยนี้">
+      <span class="meta" style="min-width:48px;margin:0;">หน่วย ${i + 1}</span>
+      <input type="text" value="${escapeHtml(u.title)}" style="flex:1;margin:0;" oninput="caiUnitEdit(${i},this.value)" aria-label="ชื่อหน่วยที่ ${i + 1}">
+      <button class="btn red sm" style="margin:0;padding:0 10px;" onclick="caiUnitDel(${i})" title="ลบหน่วยนี้">×</button></div>`).join('')
+    || '<div class="meta">ไม่พบหัวข้อเนื้อหา — กด "＋ เพิ่มหน่วย" เพื่อเพิ่มเอง</div>';
+}
+function caiSyncPicks() { const p = COURSE_AI.plan; if (!p) return; document.querySelectorAll('.cai_u').forEach(c => { const u = p.units[Number(c.dataset.i)]; if (u) u.pick = c.checked; }); }
+function caiUnitPick(i, v) { const u = COURSE_AI.plan && COURSE_AI.plan.units[i]; if (u) u.pick = !!v; }
+function caiUnitEdit(i, v) {
+  const p = COURSE_AI.plan, u = p && p.units[i]; if (!u) return;
+  u.title = caiStr(v, 120) || ('หน่วยที่ ' + (i + 1));
+  if (u.assignment && u.assignment.auto) { u.assignment.title = 'ชิ้นงาน: ' + u.title.slice(0, 80); u.assignment.description = 'ปฏิบัติ/นำเสนอผลงานตามหัวข้อ "' + u.title + '"'; }
+  clearTimeout(caiUnitEdit.t); caiUnitEdit.t = setTimeout(() => { caiRegroup(p); caiSyncDesc(p); const g = byId('cai_groups'); if (g) g.innerHTML = caiGroupsHtml(p); }, 300);
+}
+function caiUnitDel(i) { const p = COURSE_AI.plan; if (!p) return; caiSyncPicks(); p.units.splice(i, 1); caiRerender(); }
+function caiUnitAdd() { const p = COURSE_AI.plan; if (!p) return; caiSyncPicks(); p.units.push(caiMakeUnit('หน่วยการเรียนรู้ใหม่')); caiRerender(); }
+function caiSyncDesc(p) { if (COURSE_AI.mode === 'new' && byId('new_desc')) byId('new_desc').value = courseAiDescription(p); }
+function caiRerender() {
+  const p = COURSE_AI.plan; if (!p) return; caiRegroup(p); caiSyncDesc(p);
+  const s = COURSE_AI.sid ? findSubject(COURSE_AI.sid) : null;
+  byId('cai_result').innerHTML = courseAiResultHtml(p, s);
+}
 function courseAiResultHtml(plan, s) {
   const sj = plan.subject, isNew = COURSE_AI.mode === 'new', locked = !isNew && caiHasScores(s);
   const lab = (k, v) => v ? `<div class="meta"><strong style="color:var(--black);">${k}</strong> ${escapeHtml(String(v))}</div>` : '';
-  const units = plan.units.map((u, i) => `<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer;">
-      <input type="checkbox" class="cai_u" data-i="${i}" ${u.assignment ? 'checked' : 'disabled'} style="width:auto;margin-top:5px;">
-      <span style="flex:1;"><strong>หน่วยที่ ${i + 1} ${escapeHtml(u.title)}</strong>${u.hours ? ` <span class="badge">${u.hours} ชม.</span>` : ''}
-        ${u.topics.length ? `<span class="meta" style="display:block;">${u.topics.map(escapeHtml).join(' · ')}</span>` : ''}
-        ${u.assignment ? `<span class="meta" style="display:block;">🎨 ชิ้นงาน: <strong>${escapeHtml(u.assignment.title)}</strong> — เกณฑ์ ${u.assignment.rubric.map(r => escapeHtml(r.name) + ' ' + r.max).join(' · ')}</span>` : ''}</span></label>`).join('');
-  const groups = plan.groups.map((g, i) => `<div class="meta" style="line-height:1.7;"><strong style="color:var(--black);">ส.${i + 1} ${escapeHtml(g.unit)}</strong> — ${g.items.map(it => escapeHtml(it.name) + ' ' + it.max).join(' · ')} <span class="badge">${g.items.reduce((a, it) => a + it.max, 0)}</span></div>`).join('');
+  const list = (k, a) => a && a.length ? `<div class="meta" style="margin-top:6px;"><strong style="color:var(--black);">${k}</strong><br>${a.map((o, i) => (i + 1) + '. ' + escapeHtml(o)).join('<br>')}</div>` : '';
+  const found = [sj.code, sj.name, sj.credit, sj.hours_per_week].some(Boolean);
   return `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
+    ${found ? '' : '<div class="meta" style="color:#B3261E;">ไม่พบรหัสวิชา/ชื่อวิชา/ท-ป-น ในข้อความ (ข้ามส่วนนี้ได้ หรือกรอกเองในฟอร์ม)</div>'}
     ${lab('รหัสวิชา', sj.code)}${lab('ชื่อวิชา', sj.name)}${lab('ระดับ', sj.level)}${lab('หน่วยกิต', sj.credit)}${lab('ชั่วโมง/สัปดาห์', sj.hours_per_week)}
-    ${plan.objectives.length ? `<div class="meta" style="margin-top:6px;"><strong style="color:var(--black);">จุดประสงค์รายวิชา</strong><br>${plan.objectives.map((o, i) => (i + 1) + '. ' + escapeHtml(o)).join('<br>')}</div>` : ''}
-    <div style="margin-top:10px;font-weight:700;color:var(--red);">หน่วยการเรียนรู้ + ชิ้นงาน <span class="meta" style="font-weight:400;">(ติ๊กหน่วยที่ต้องการสร้างหัวข้อชิ้นงาน)</span></div>${units || '<div class="meta">ไม่พบหน่วยการเรียนรู้</div>'}
-    <div style="margin-top:10px;font-weight:700;color:var(--red);">โครงสร้างคะแนน 5 สมรรถนะ (รวม 70)</div>${groups}
+    ${list('จุดประสงค์รายวิชา', plan.objectives)}${list('สมรรถนะรายวิชา', plan.competencies)}
+    <div style="margin-top:10px;font-weight:700;color:var(--red);">หน่วยการเรียนรู้ + ชิ้นงาน <span class="meta" style="font-weight:400;">(แก้ชื่อ/ลบ/เพิ่มได้ · ติ๊ก = สร้างหัวข้อชิ้นงานของหน่วยนั้น)</span></div>
+    <div id="cai_units">${caiUnitsHtml(plan)}</div>
+    <button class="btn outline sm" style="margin:8px 0 0;" onclick="caiUnitAdd()">＋ เพิ่มหน่วย</button>
+    <div style="margin-top:10px;font-weight:700;color:var(--red);">โครงสร้างคะแนน 5 สมรรถนะ (รวม 70)</div><div id="cai_groups">${caiGroupsHtml(plan)}</div>
     <div style="margin-top:10px;">
       ${isNew ? '' : `<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;"><input type="checkbox" id="cai_info" style="width:auto;margin-top:4px;"> <span>อัปเดตข้อมูลรายวิชา (รหัส/หน่วยกิต/ชั่วโมง + คำอธิบายพร้อมจุดประสงค์และหน่วยการเรียนรู้) <span class="meta">— ทับคำอธิบายเดิม</span></span></label>`}
-      <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;margin-top:6px;"><input type="checkbox" id="cai_score" ${locked ? 'disabled' : 'checked'} style="width:auto;margin-top:4px;"> <span>ตั้งโครงสร้างคะแนน 5 สมรรถนะตามที่ AI วิเคราะห์ ${locked ? '<span class="meta" style="color:#B3261E;">— วิชานี้มีคะแนนที่บันทึกแล้ว จึงไม่เปลี่ยนโครงสร้าง</span>' : '<span class="meta">— ทับโครงสร้างเดิม แก้ต่อได้ในแท็บรายงานผลคะแนน</span>'}</span></label>
+      <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;margin-top:6px;"><input type="checkbox" id="cai_score" ${locked || !plan.groups.length ? 'disabled' : 'checked'} style="width:auto;margin-top:4px;"> <span>ตั้งโครงสร้างคะแนน 5 สมรรถนะตามที่วิเคราะห์ได้ ${locked ? '<span class="meta" style="color:#B3261E;">— วิชานี้มีคะแนนที่บันทึกแล้ว จึงไม่เปลี่ยนโครงสร้าง</span>' : '<span class="meta">— ทับโครงสร้างเดิม แก้ต่อได้ในแท็บรายงานผลคะแนน</span>'}</span></label>
     </div>
     ${isNew ? '<div class="meta" style="margin-top:8px;line-height:1.6;">ตรวจ/แก้ข้อมูลในฟอร์มด้านล่าง แล้วกด "เพิ่มรายวิชา" — ระบบจะสร้างชิ้นงานและโครงสร้างคะแนนตามที่ติ๊กไว้ให้พร้อมกัน</div>'
       : '<button class="btn gold" id="cai_apply" style="margin-top:10px;" onclick="courseAiApplyExisting()">นำไปใช้กับรายวิชานี้</button>'}
@@ -3987,7 +4095,7 @@ async function courseAiApply(s, o) {
   const sc = byId('cai_score');
   if (sc && sc.checked && !sc.disabled) {
     const r = ensureReport(s), slots = rptSlots(s);
-    const groups = plan.groups.map((g, i) => ({ unit: g.unit, items: g.items.slice(0, slots[i]).map(it => ({ name: it.name, max: it.max })) }));
+    const groups = plan.groups.map((g, i) => ({ unit: g.unit, items: g.items.slice(0, slots[i]).map(it => { const o = { name: it.name, max: it.max }; if (it.kind) o.kind = it.kind; if (it.focus) o.focus = it.focus; return o; }) }));
     caiScaleTo70(groups);
     r.comps = groups.map(g => ({ unit: g.unit, assignment_id: '', items: g.items }));
     const cfg = Object.assign({}, r), scores = cfg.scores || {}; delete cfg.scores;
