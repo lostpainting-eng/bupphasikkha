@@ -3837,7 +3837,7 @@ function caiTopics(lines) {
 function caiMakeUnit(title) {
   title = caiStr(title, 120);
   return { title, hours: null, topics: [], assignment: { title: 'ชิ้นงาน: ' + title.slice(0, 80), description: 'ปฏิบัติ/นำเสนอผลงานตามหัวข้อ "' + title + '"', auto: true,
-    rubric: [{ name: 'ความถูกต้องตามแบบแผน', max: 15 }, { name: 'ความประณีต', max: 10 }, { name: 'ความสมบูรณ์ของผลงาน', max: 5 }] }, pick: CAI_PRACT_RE.test(title) };
+    rubric: [{ name: 'ความถูกต้องตามแบบแผน', max: 15 }, { name: 'ความประณีต', max: 10 }, { name: 'ความสมบูรณ์ของผลงาน', max: 5 }] }, pick: true };
 }
 function caiRegroup(plan) {
   const slots = rptSlots({ level: plan.level || '' });
@@ -3863,7 +3863,13 @@ function courseParseText(raw, level) {
   const descLines = sec.desc.filter(l => !/^(?:รหัส\s*วิชา|ชื่อ\s*วิชา)/.test(l));
   let topics = caiTopics(descLines);
   const objectives = caiItems(sec.obj), competencies = caiItems(sec.comp);
-  if (!topics.length) topics = (competencies.length ? competencies : objectives).slice(0, 8).map(x => x.replace(/^(?:แสดง|อธิบาย|เข้าใจ|สามารถ)\s*/, ''));
+  // ถ้าได้หัวข้อน้อยกว่า 5 (ย่อหน้าไม่มีเว้นวรรคแบ่ง) ให้เสริมจากสมรรถนะ/จุดประสงค์ แล้วซอยข้อที่ยาวตาม "และ" / ","
+  if (topics.length < 5) {
+    const clean = x => caiStr(x, 200).replace(/^(?:มีความรู้ความเข้าใจ|มีความรู้|มีทักษะ|มีกิจนิสัย|มีเจตคติ|แสดงความรู้|แสดง|อธิบาย|เข้าใจ|สามารถ|ประยุกต์)\s*(?:เกี่ยวกับ|ใน|ที่ดีใน|ที่ดีต่อ|ต่อ)?\s*/, '');
+    const split = x => x.length <= 45 ? [x] : x.split(/\s*,\s*|\s+และ\s*|\s{2,}/).map(t => t.trim()).filter(t => t.length > 3);
+    const seen = {}; topics.forEach(t => { seen[t.replace(/\s+/g, '')] = 1; });
+    [].concat(competencies, objectives).forEach(x => split(clean(x)).forEach(t => { const k = t.replace(/\s+/g, ''); if (t.length > 3 && !seen[k] && topics.length < 10) { seen[k] = 1; topics.push(t); } }));
+  }
   if (topics.length > 10) topics = topics.slice(0, 9).concat([topics.slice(9).join(' และ')]);
   const units = topics.map(caiMakeUnit);
   const hpw = (theory || prac) ? (theory || 0) + (prac || 0) : null;
@@ -3973,7 +3979,7 @@ function caiOcrCanvas(src) {
   return new Promise((res, rej) => {
     const img = new Image();
     img.onload = () => {
-      const m = Math.max(img.width, img.height), sc = m < 1500 ? Math.min(2.5, 1800 / m) : 1, c = document.createElement('canvas');
+      const m = Math.max(img.width, img.height), sc = m < 2200 ? Math.min(2.5, 2200 / m) : 1, c = document.createElement('canvas');
       c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
       const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height); res(c);
     };
@@ -3983,8 +3989,8 @@ function caiOcrCanvas(src) {
 async function caiOcrImages(imgs, onStatus) {
   await caiLoadOcr();
   let cur = 0; const n = imgs.length, out = [];
-  onStatus('กำลังเตรียมตัวอ่านภาษาไทย (ครั้งแรกต้องโหลดข้อมูลภาษา อาจใช้เวลาสักครู่) …');
-  const worker = await Tesseract.createWorker('tha', 1, { logger: m => { if (m && m.status === 'recognizing text') onStatus('กำลังอ่านรูปที่ ' + (cur + 1) + '/' + n + ' … ' + Math.round((m.progress || 0) * 100) + '%'); } });
+  onStatus('กำลังเตรียมตัวอ่านภาษาไทย (ครั้งแรกต้องโหลดข้อมูลภาษาไทย+อังกฤษ ประมาณ 12 MB อาจใช้เวลาสักครู่) …');
+  const worker = await Tesseract.createWorker('tha+eng', 1, { logger: m => { if (m && m.status === 'recognizing text') onStatus('กำลังอ่านรูปที่ ' + (cur + 1) + '/' + n + ' … ' + Math.round((m.progress || 0) * 100) + '%'); } });
   try {
     for (; cur < n; cur++) { const r = await worker.recognize(await caiOcrCanvas(imgs[cur].src), {}, { blocks: true, text: true }); out.push(caiOcrText(r.data)); }
   } finally { try { await worker.terminate(); } catch (e) {} }
